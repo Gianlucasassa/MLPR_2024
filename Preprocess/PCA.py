@@ -154,23 +154,31 @@ def plot_pca_histograms(D, L, pca_dim=6, output_dir='Output/PCA_Histograms'):
         plt.savefig(os.path.join(output_dir, f'PCA_Component_{i + 1}_Histogram.png'))
         plt.close()
 
+def apply_PCA_from_dim(D, m):
+    P_pca = estimate_pca(D, m)
+    D_pca = apply_pca(D, P_pca)
+    return D_pca, P_pca
+
+def apply_LDA_from_dim(D, L, m):
+    W_lda = compute_lda_projection_matrix(D, L, m)
+    D_lda = apply_lda(D, W_lda)
+    return D_lda, W_lda
+
 def PCA_LDA_analysis(DTE, DTR, LTR):
     # Split the dataset
     D_train, L_train, D_val, L_val = split_dataset(DTR, LTR)
     # Apply PCA and then LDA, and plot results
     pca_dim_values = [2, 4, 6]
     for pca_dim in pca_dim_values:
-        P_pca = estimate_pca(D_train, pca_dim)
-        D_train_pca = apply_pca(D_train, P_pca)
+        D_train_pca, P_pca = apply_PCA_from_dim(D_train, pca_dim)
         D_val_pca = apply_pca(D_val, P_pca)
-
         pca_lda_error_rate, pca_lda_threshold = lda_classification(D_train_pca, L_train, D_val_pca, L_val)
         print(f"PCA (dim={pca_dim}) + LDA Classification Error Rate: {pca_lda_error_rate}")
+
     # Set the number of principal components
     mp = 6
     # PCA implementation
-    P_pca = estimate_pca(DTR, mp)
-    DTR_pca = apply_pca(DTR, P_pca)
+    DTR_pca, P_pca = apply_PCA_from_dim(DTR, mp)
     DTE_pca = apply_pca(DTE, P_pca)
     # Plot PCA results
     plot_feature_pairs(DTR_pca, LTR, output_dir='Output/PCA_FeaturePairPlots')

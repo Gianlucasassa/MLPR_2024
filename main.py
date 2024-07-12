@@ -300,19 +300,19 @@ def main(type, mode):
     ciao = False
     print("ciao")
     #if ciao:
-    ############################ DATA ANALYSIS ############################
+    ############################ DATA ANALYSIS - LAB 2 ############################
 
     data_analysis(DTR, LTR)
 
-    ############################ PCA & LDA  ############################
+    ############################ PCA & LDA - LAB 3  ############################
 
     PCA_LDA_analysis(DTE, DTR, LTR)
 
-    ############################ UNIVARIATE GAUSSIAN MODELS ############################
+    ############################ UNIVARIATE GAUSSIAN MODELS - LAB 4 ############################
 
     Univariate_model(DTE, DTR, LTE, LTR)
 
-    ############################ MULTIVARIATE GAUSSIAN MODELS ############################
+    ############################ MULTIVARIATE GAUSSIAN MODELS - LAB 5 ############################
 
     train_MVG_1(DTE, DTR, LTE, LTR)
 
