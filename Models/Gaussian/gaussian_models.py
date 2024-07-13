@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 from sklearn.metrics import roc_curve, auc, ConfusionMatrixDisplay
 from sklearn.metrics import confusion_matrix as confMAt
 
-from Preprocess.PCA import estimate_pca, apply_pca
+from Preprocess.PCA import apply_pca, apply_PCA_from_dim
 
 
 def compute_dcf(predictions, labels, pi1, Cfn, Cfp):
@@ -116,6 +116,16 @@ class GaussianClassifier:
                 plt.savefig(os.path.join(output_dir, f'Class_{cls}_Feature_{i + 1}.png'))
                 plt.close()
 
+    def logpdf_GAU_1D(self, X, mu, var):
+        log_density = -0.5 * (np.log(2 * np.pi * var) + ((X - mu) ** 2) / var)
+        return log_density
+
+    def vrow(self, col):
+        return col.reshape((1, col.size))
+
+    def vcol(self, row):
+        return row.reshape((row.size, 1))
+
     def plot_loglikelihood(self, X, mu, C, output_file):
         ll = np.sum(self.logpdf_GAU_ND(X, mu, C))
         plt.figure()
@@ -128,12 +138,6 @@ class GaussianClassifier:
         plt.savefig(output_file)
         plt.close()
         return ll
-
-    def vrow(self, col):
-        return col.reshape((1, col.size))
-
-    def vcol(self, row):
-        return row.reshape((row.size, 1))
 
     def analyze_covariances(self, DTR, LTR, output_dir='Output/Covariances'):
         os.makedirs(output_dir, exist_ok=True)
@@ -382,16 +386,22 @@ def train_MVG_1(DTE, DTR, LTE, LTR):
     nb_classifier_reduced = GaussianClassifier(model_type='NaiveBayes')
     evaluate_model(nb_classifier_reduced, 'NaiveBayes_Reduced', DTR_reduced, LTR, DTE_reduced, LTE, output_dir)
     # Use PCA to reduce the dimensionality and apply the three classification approaches
-    pca_dim = 2  # For example, reduce to 2 principal components
-    P_pca = estimate_pca(DTR, pca_dim)
-    DTR_pca = apply_pca(DTR, P_pca)
+
+    # Reduce to 2 principal components for example
+    pca_dim = 2
+
+    # Apply PCA using the new functions
+    DTR_pca, P_pca = apply_PCA_from_dim(DTR, pca_dim)
     DTE_pca = apply_pca(DTE, P_pca)
+
     # MVG with PCA
     mvg_classifier_pca = GaussianClassifier(model_type='MVG')
     evaluate_model(mvg_classifier_pca, 'MVG_PCA', DTR_pca, LTR, DTE_pca, LTE, output_dir)
+
     # Tied Covariance with PCA
     tied_classifier_pca = GaussianClassifier(model_type='TiedCovariance')
     evaluate_model(tied_classifier_pca, 'TiedCovariance_PCA', DTR_pca, LTR, DTE_pca, LTE, output_dir)
+
     # Naive Bayes with PCA
     nb_classifier_pca = GaussianClassifier(model_type='NaiveBayes')
     evaluate_model(nb_classifier_pca, 'NaiveBayes_PCA', DTR_pca, LTR, DTE_pca, LTE, output_dir)

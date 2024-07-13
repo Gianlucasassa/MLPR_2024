@@ -6,7 +6,7 @@ import os
 from load import data_statistics_light
 
 
-def plot_feature_distributions(D, L, output_dir='Output/FeatureDistributions'):
+def plot_feature_distributions(D, L, output_dir='Output/FeatureDistributions', origin='main'):
     """
     Plots and saves histograms of feature distributions separated by class.
 
@@ -16,6 +16,14 @@ def plot_feature_distributions(D, L, output_dir='Output/FeatureDistributions'):
     output_dir (str): The directory where plots will be saved.
     """
     num_features = D.shape[0]  # Number of features
+
+    if origin.startswith("PCA"):
+        add_on = f" - PCA with {origin.split('_')[1]}"
+        add_on_save = f"-PCA{origin.split('_')[1]}"
+        print("found Pca fd")
+    else:
+        add_on = ""
+        add_on_save = ""
 
     # Create output directory if it doesn't exist
     if not os.path.exists(output_dir):
@@ -38,19 +46,19 @@ def plot_feature_distributions(D, L, output_dir='Output/FeatureDistributions'):
         plt.hist(D_genuine[i, :], bins=num_bins, alpha=0.5, label='Genuine', density=True)
         plt.hist(D_fake[i, :], bins=num_bins, alpha=0.5, label='Fake', density=True)
 
-        plt.title(f'Distribution of Feature {i + 1}')
+        plt.title(f'Distribution of Feature {i + 1}{add_on}')
         plt.xlabel(f'Feature {i + 1} Value')
         plt.ylabel('Density')
         plt.legend()
         plt.grid(True)
 
         # Save the figure
-        plot_filename = os.path.join(output_dir, f'Feature_{i + 1}_Distribution.png')
+        plot_filename = os.path.join(output_dir, f'Feature_{i + 1}{add_on_save}_Distribution.png')
         plt.savefig(plot_filename)
         plt.close()
 
 
-def plot_feature_pairs(D, L, output_dir='Output/FeaturePairPlots'):
+def plot_feature_pairs(D, L, output_dir='Output/FeaturePairPlots', origin='main'):
     """
     Plots and saves scatter plots of feature pairs, separated by class.
 
@@ -68,6 +76,14 @@ def plot_feature_pairs(D, L, output_dir='Output/FeaturePairPlots'):
     # Define colors for classes
     colors = {0: 'orange', 1: 'blue'}
 
+    if origin.startswith("PCA"):
+        add_on = f" - PCA with {origin.split('_')[1]}"
+        add_on_save = f"-PCA{origin.split('_')[1]}"
+        print("found Pca fp")
+    else:
+        add_on = ""
+        add_on_save = ""
+
     # Create scatter plots for each pair of features
     for i in range(num_features):
         for j in range(i + 1, num_features):
@@ -78,14 +94,14 @@ def plot_feature_pairs(D, L, output_dir='Output/FeaturePairPlots'):
                 plt.scatter(D[i, class_mask], D[j, class_mask], alpha=0.5,
                             c=colors[class_value], label=f'{"Genuine" if class_value else "Fake"}')
 
-            plt.title(f'Feature {i + 1} vs Feature {j + 1}')
+            plt.title(f'Feature {i + 1} vs Feature {j + 1}{add_on}')
             plt.xlabel(f'Feature {i + 1}')
             plt.ylabel(f'Feature {j + 1}')
             plt.legend()
             plt.grid(True)
 
             # Save the figure
-            plot_filename = os.path.join(output_dir, f'Feature_{i + 1}_vs_Feature_{j + 1}_Scatter.png')
+            plot_filename = os.path.join(output_dir, f'Feature_{i + 1}_vs_Feature_{j + 1}_Scatter{add_on_save}.png')
             plt.savefig(plot_filename)
             plt.close()  # Close the figure to free memory
 
@@ -379,8 +395,8 @@ def data_analysis(DTR, LTR):
     data_statistics_light(DTR, LTR)
     # Additional Analysis
     DC, _ = center_data(DTR)
-    plot_feature_pairs(DC, LTR, output_dir='Output/CenteredFeaturePairPlots')
-    plot_feature_distributions(DC, LTR, output_dir='Output/CenteredFeatureDistributions')
+    plot_feature_pairs(DC, LTR, output_dir='Output/CenteredFeaturePairPlots', origin='main')
+    plot_feature_distributions(DC, LTR, output_dir='Output/CenteredFeatureDistributions', origin='main')
     for i in range(2):
         print(f"Class {i}")
         variance = DTR.var(i)

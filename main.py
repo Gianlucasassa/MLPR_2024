@@ -306,7 +306,7 @@ def main(type, mode):
 
     ############################ PCA & LDA - LAB 3  ############################
 
-    PCA_LDA_analysis(DTE, DTR, LTR)
+    PCA_LDA_analysis(DTE, DTR, LTR, LTE)
 
     ############################ UNIVARIATE GAUSSIAN MODELS - LAB 4 ############################
 
@@ -420,7 +420,7 @@ def main(type, mode):
 
     ############################ PCA & LDA  ############################
 
-    PCA_LDA_analysis(DTE, DTR, LTR)
+    PCA_LDA_analysis(DTE, DTR, LTR, LTE)
 
     ############################ UNIVARIATE GAUSSIAN MODELS ############################
 
@@ -1190,14 +1190,11 @@ def main(type, mode):
     run_rbf_svm(DTR, LTR, DTE, LTE, Cs, gammas)
 '''
 
-
 def Univariate_model(DTE, DTR, LTE, LTR):
     mvg_classifier = GaussianClassifier()
-    mvg_classifier.train(DTR, LTR)
-    logS = mvg_classifier.predict(DTE)
-    predictions = mvg_classifier.compute_predictions(logS)
-    error_rate = mvg_classifier.compute_error_rate(predictions, LTE)
-    print(f"MVG Error Rate: {error_rate}")
+    mvg_classifier.fit_univariate_gaussian_models(DTR, LTR)
+
+
 
 
 if __name__ == "__main__":

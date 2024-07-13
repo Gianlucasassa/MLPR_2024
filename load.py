@@ -92,8 +92,8 @@ def data_statistics_light(DTR, LTR):
     DTR (numpy.ndarray): Data matrix where each row is a sample and each column is a feature.
     LTR (numpy.ndarray): Label vector where each element is the class label for corresponding sample.
     """
-    num_samples = DTR.shape[0]
-    num_features = DTR.shape[1]
+    num_samples = DTR.shape[1]
+    num_features = DTR.shape[0]
     num_genuine = np.sum(LTR == 1)
     num_fake = np.sum(LTR == 0)
     
