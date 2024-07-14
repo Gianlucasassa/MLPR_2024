@@ -392,6 +392,145 @@ def vcol(x):
 def vrow(x):
     return x.reshape((1, x.size))
 
+def polyKernel(degree, c):
+    def polyKernelFunc(D1, D2):
+        return (np.dot(D1.T, D2) + c) ** degree
+    return polyKernelFunc
+
+def rbfKernel(gamma):
+    def rbfKernelFunc(D1, D2):
+        D1Norms = (D1 ** 2).sum(0)
+        D2Norms = (D2 ** 2).sum(0)
+        Z = vcol(D1Norms) + vrow(D2Norms) - 2 * np.dot(D1.T, D2)
+        return np.exp(-gamma * Z)
+    return rbfKernelFunc
+
+def train_dual_SVM_linear(DTR, LTR, C, K=1):
+    ZTR = LTR * 2.0 - 1.0
+    DTR_EXT = np.vstack([DTR, np.ones((1, DTR.shape[1])) * K])
+    H = np.dot(DTR_EXT.T, DTR_EXT) * vcol(ZTR) * vrow(ZTR)
+
+    def fOpt(alpha):
+        Ha = H @ vcol(alpha)
+        loss = 0.5 * (vrow(alpha) @ Ha).ravel() - alpha.sum()
+        grad = Ha.ravel() - np.ones(alpha.size)
+        return loss, grad
+
+    alphaStar, _, _ = scipy.optimize.fmin_l_bfgs_b(fOpt, np.zeros(DTR_EXT.shape[1]), bounds=[(0, C) for _ in LTR], factr=1.0)
+
+    def primalLoss(w_hat):
+        S = (vrow(w_hat) @ DTR_EXT).ravel()
+        return 0.5 * np.linalg.norm(w_hat) ** 2 + C * np.maximum(0, 1 - ZTR * S).sum()
+
+    w_hat = (vrow(alphaStar) * vrow(ZTR) * DTR_EXT).sum(1)
+    w, b = w_hat[0:DTR.shape[0]], w_hat[-1] * K
+
+    primalLoss, dualLoss = primalLoss(w_hat), -fOpt(alphaStar)[0]
+    print('SVM - C %e - K %e - primal loss %e - dual loss %e - duality gap %e' % (C, K, primalLoss, dualLoss, primalLoss - dualLoss))
+
+    return w, b
+
+def train_dual_SVM_kernel(DTR, LTR, C, kernelFunc, eps=1.0):
+    ZTR = LTR * 2.0 - 1.0
+    K = kernelFunc(DTR, DTR) + eps
+    H = vcol(ZTR) * vrow(ZTR) * K
+
+    def fOpt(alpha):
+        Ha = H @ vcol(alpha)
+        loss = 0.5 * (vrow(alpha) @ Ha).ravel() - alpha.sum()
+        grad = Ha.ravel() - np.ones(alpha.size)
+        return loss, grad
+
+    alphaStar, _, _ = scipy.optimize.fmin_l_bfgs_b(fOpt, np.zeros(DTR.shape[1]), bounds=[(0, C) for _ in LTR], factr=1.0)
+    print('SVM (kernel) - C %e - dual loss %e' % (C, -fOpt(alphaStar)[0]))
+
+    def fScore(DTE):
+        K = kernelFunc(DTR, DTE) + eps
+        H = vcol(alphaStar) * vcol(ZTR) * K
+        return H.sum(0)
+
+    return fScore
+
+
+def compute_confusion_matrix(predictedLabels, classLabels):
+    nClasses = classLabels.max() + 1
+    M = np.zeros((nClasses, nClasses), dtype=np.int32)
+    for i in range(classLabels.size):
+        M[predictedLabels[i], classLabels[i]] += 1
+    return M
+
+
+def compute_empirical_Bayes_risk_binary(predictedLabels, classLabels, prior, Cfn, Cfp, normalize=True):
+    M = compute_confusion_matrix(predictedLabels, classLabels)  # Confusion matrix
+    Pfn = M[0, 1] / (M[0, 1] + M[1, 1])
+    Pfp = M[1, 0] / (M[0, 0] + M[1, 0])
+    bayesError = prior * Cfn * Pfn + (1 - prior) * Cfp * Pfp
+    if normalize:
+        return bayesError / np.minimum(prior * Cfn, (1 - prior) * Cfp)
+    return bayesError
+
+
+def compute_optimal_Bayes_binary_llr(llr, prior, Cfn, Cfp):
+    th = -np.log((prior * Cfn) / ((1 - prior) * Cfp))
+    return np.int32(llr > th)
+
+
+def compute_empirical_Bayes_risk_binary_llr_optimal_decisions(llr, classLabels, prior, Cfn, Cfp, normalize=True):
+    predictedLabels = compute_optimal_Bayes_binary_llr(llr, prior, Cfn, Cfp)
+    return compute_empirical_Bayes_risk_binary(predictedLabels, classLabels, prior, Cfn, Cfp, normalize=normalize)
+
+
+def compute_Pfn_Pfp_allThresholds_fast(llr, classLabels):
+    llrSorter = np.argsort(llr)
+    llrSorted = llr[llrSorter]  # We sort the llrs
+    classLabelsSorted = classLabels[llrSorter]  # we sort the labels so that they are aligned to the llrs
+
+    Pfp = []
+    Pfn = []
+
+    nTrue = (classLabelsSorted == 1).sum()
+    nFalse = (classLabelsSorted == 0).sum()
+    nFalseNegative = 0  # With the left-most theshold all samples are assigned to class 1
+    nFalsePositive = nFalse
+
+    Pfn.append(nFalseNegative / nTrue)
+    Pfp.append(nFalsePositive / nFalse)
+
+    for idx in range(len(llrSorted)):
+        if classLabelsSorted[idx] == 1:
+            nFalseNegative += 1  # Increasing the threshold we change the assignment for this llr from 1 to 0, so we increase the error rate
+        if classLabelsSorted[idx] == 0:
+            nFalsePositive -= 1  # Increasing the threshold we change the assignment for this llr from 1 to 0, so we decrease the error rate
+        Pfn.append(nFalseNegative / nTrue)
+        Pfp.append(nFalsePositive / nFalse)
+
+    llrSorted = np.concatenate([-np.array([np.inf]), llrSorted])
+
+    PfnOut = []
+    PfpOut = []
+    thresholdsOut = []
+    for idx in range(len(llrSorted)):
+        if idx == len(llrSorted) - 1 or llrSorted[idx + 1] != llrSorted[
+            idx]:  # We are indeed changing the threshold, or we have reached the end of the array of sorted scores
+            PfnOut.append(Pfn[idx])
+            PfpOut.append(Pfp[idx])
+            thresholdsOut.append(llrSorted[idx])
+
+    return np.array(PfnOut), np.array(PfpOut), np.array(thresholdsOut)  # we return also the corresponding thresholds
+
+
+def compute_minDCF_binary_fast(llr, classLabels, prior, Cfn, Cfp, returnThreshold=False):
+    Pfn, Pfp, th = compute_Pfn_Pfp_allThresholds_fast(llr, classLabels)
+    minDCF = (prior * Cfn * Pfn + (1 - prior) * Cfp * Pfp) / np.minimum(prior * Cfn, (
+                1 - prior) * Cfp)  # We exploit broadcasting to compute all DCFs for all thresholds
+    idx = np.argmin(minDCF)
+    if returnThreshold:
+        return minDCF[idx], th[idx]
+    else:
+        return minDCF[idx]
+
+
+compute_actDCF_binary_fast = compute_empirical_Bayes_risk_binary_llr_optimal_decisions
 
 def reduce_dataset(D, L, fraction=0.1, seed=42):
     np.random.seed(seed)
@@ -421,7 +560,10 @@ class SVMClassifier:
         return (np.dot(x1.T, x2) + self.coef0) ** self.degree
 
     def rbf_kernel(self, x1, x2):
-        return np.exp(-self.gamma * np.linalg.norm(x1 - x2) ** 2)
+        D1Norms = (x1 ** 2).sum(0)
+        D2Norms = (x2 ** 2).sum(0)
+        Z = vcol(D1Norms) + vrow(D2Norms) - 2 * np.dot(x1.T, x2)
+        return np.exp(-self.gamma * Z)
 
     def compute_kernel(self, X1, X2):
         if self.kernel == 'linear':
@@ -434,49 +576,22 @@ class SVMClassifier:
             raise ValueError("Unsupported kernel type")
 
     def train(self, DTR, LTR):
-        ZTR = LTR * 2.0 - 1.0  # Convert labels to +1/-1
-        DTR_EXT = np.vstack([DTR, np.ones((1, DTR.shape[1])) * 1])  # K=1 for simplicity
-        H = np.dot(DTR_EXT.T, DTR_EXT) * vcol(ZTR) * vrow(ZTR)
-
-        def fOpt(alpha):
-            Ha = H @ vcol(alpha)
-            loss = 0.5 * (vrow(alpha) @ Ha).ravel() - alpha.sum()
-            grad = Ha.ravel() - np.ones(alpha.size)
-            return loss, grad
-
-        alphaStar, _, _ = scipy.optimize.fmin_l_bfgs_b(fOpt, np.zeros(DTR_EXT.shape[1]),
-                                                       bounds=[(0, self.C) for _ in LTR], factr=1.0)
-
-        w_hat = (vrow(alphaStar) * vrow(ZTR) * DTR_EXT).sum(1)
-
-        self.w = w_hat[0:DTR.shape[0]]
-        self.b = w_hat[-1]
-
-        self.alpha = alphaStar
-        sv = self.alpha > 1e-5
-        self.support_vectors = DTR[:, sv]
-        self.support_vector_labels = LTR[sv]
-        self.alpha = self.alpha[sv]
-
-        if len(self.support_vector_labels) == 0:
-            raise ValueError("No support vectors found for C={}".format(self.C))
-
-        primalLoss, dualLoss = self.primalLoss(w_hat, DTR_EXT, ZTR), -fOpt(alphaStar)[0]
-        print('SVM - C %e - primal loss %e - dual loss %e - duality gap %e' % (
-            self.C, primalLoss, dualLoss, primalLoss - dualLoss))
-        # print(f"Number of support vectors: {len(self.support_vector_labels)}")
-
-    def primalLoss(self, w_hat, DTR_EXT, ZTR):
-        S = (vrow(w_hat) @ DTR_EXT).ravel()
-        return 0.5 * np.linalg.norm(w_hat) ** 2 + self.C * np.maximum(0, 1 - ZTR * S).sum()
+        if self.kernel == 'linear':
+            self.w, self.b = train_dual_SVM_linear(DTR, LTR, self.C)
+        elif self.kernel == 'poly':
+            kernelFunc = polyKernel(self.degree, self.coef0)
+            self.fScore = train_dual_SVM_kernel(DTR, LTR, self.C, kernelFunc)
+        elif self.kernel == 'rbf':
+            kernelFunc = rbfKernel(self.gamma)
+            self.fScore = train_dual_SVM_kernel(DTR, LTR, self.C, kernelFunc)
+        else:
+            raise ValueError("Unsupported kernel type")
 
     def project(self, D):
         if self.kernel == 'linear':
             return np.dot(self.w.T, D) + self.b
         else:
-            K = np.array([[self.compute_kernel(self.support_vectors[:, i], D[:, j]) for j in range(D.shape[1])] for i in
-                          range(self.support_vectors.shape[1])])
-            return np.dot((self.alpha * self.support_vector_labels), K) + self.b
+            return self.fScore(D)
 
     def predict(self, D):
         return np.sign(self.project(D))
@@ -489,13 +604,13 @@ class SVMClassifier:
 
     def compute_dcf(self, scores, labels, pi_t):
         thresholds = np.sort(scores)
-        min_dcf = float('inf')
+        actual_dcf = float('inf')
         for t in thresholds:
             predictions = (scores >= t).astype(int)
             dcf = self.compute_dcf_at_threshold(predictions, labels, pi_t)
-            if dcf < min_dcf:
-                min_dcf = dcf
-        return min_dcf
+            if dcf < actual_dcf:
+                actual_dcf = dcf
+        return actual_dcf
 
     def compute_min_dcf(self, scores, labels, pi_t):
         thresholds = np.sort(scores)
@@ -528,12 +643,26 @@ class SVMClassifier:
         plt.savefig(output_file)
         plt.close()
 
-    def evaluate_model(self, DTR, LTR, DTE, LTE, lambdas, pi_t, output_dir, kernel_type, gamma=None):
+    def plot_dcf(self, lambdas, dcf_values, min_dcf_values, act_dcf_values, output_path, title):
+        plt.figure()
+        plt.plot(lambdas, dcf_values, label='Actual DCF')
+        plt.plot(lambdas, min_dcf_values, label='Min DCF')
+        plt.plot(lambdas, act_dcf_values, label='Act DCF')
+        plt.xscale('log')
+        plt.xlabel('Lambda')
+        plt.ylabel('DCF')
+        plt.title(title)
+        plt.legend()
+        plt.grid(True)
+        plt.savefig(output_path)
+        plt.close()
 
+    def evaluate_model(self, DTR, LTR, DTE, LTE, lambdas, pi_t, output_dir, kernel_type, gamma=None):
         os.makedirs(output_dir, exist_ok=True)
 
         dcf_values = []
         min_dcf_values = []
+        act_dcf_values = []
         successful_lambdas = []
 
         for l in lambdas:
@@ -542,43 +671,34 @@ class SVMClassifier:
                 self.gamma = gamma
             try:
                 self.train(DTR, LTR)
-                print(f"Training with C={l}, number of support vectors: {len(self.support_vector_labels)}")
+                #print(f"Training with C={l}, number of support vectors: {len(self.support_vector_labels)}")
                 scores = self.project(DTE)
-                dcf = self.compute_dcf(scores, LTE, pi_t)
-                min_dcf = self.compute_min_dcf(scores, LTE, pi_t)
+                dcf = compute_empirical_Bayes_risk_binary_llr_optimal_decisions(scores, LTE, pi_t, 1, 1, normalize=True)
+                min_dcf = compute_minDCF_binary_fast(scores, LTE, pi_t, 1, 1)
+                act_dcf = compute_actDCF_binary_fast(scores, LTE, pi_t, 1, 1)
                 dcf_values.append(dcf)
                 min_dcf_values.append(min_dcf)
+                act_dcf_values.append(act_dcf)
                 successful_lambdas.append(l)
                 error_rate = self.compute_error_rate(self.compute_predictions(scores), LTE)
-                print(f"Lambda: {l}, DCF: {dcf}, Min DCF: {min_dcf}, Error Rate: {error_rate}")
+                print(f"Lambda: {l}, DCF: {dcf}, Min DCF: {min_dcf}, Act DCF: {act_dcf}, Error Rate: {error_rate}")
             except ValueError as e:
                 print(f"Skipping C={l} due to error: {e}")
 
-        plot_title = f'{kernel_type.capitalize()} SVM - DCF vs Lambda'
+        plot_title = f'{kernel_type.capitalize()} SVM DCF vs Lambda'
         if gamma is not None:
             plot_title += f' (gamma={gamma})'
-        self.plot_dcf(successful_lambdas, dcf_values, min_dcf_values, os.path.join(output_dir,
-                                                                                   f'dcf_plot_{kernel_type}{"_gamma_" + str(gamma) if gamma else ""}.png'),
+        self.plot_dcf(successful_lambdas, dcf_values, min_dcf_values, act_dcf_values,
+                      os.path.join(output_dir, f'dcf_plot_{kernel_type}{"_gamma_" + str(gamma) if gamma else ""}.png'),
                       plot_title)
 
-    def plot_dcf(self, lambdas, dcf_values, min_dcf_values, output_file='dcf_plot.png', plot_title='DCF vs Lambda'):
-        plt.figure()
-        plt.plot(lambdas, dcf_values, label='Actual DCF')
-        plt.plot(lambdas, min_dcf_values, label='Min DCF')
-        plt.xscale('log')
-        plt.xlabel('Lambda')
-        plt.ylabel('DCF')
-        plt.title(plot_title)
-        plt.legend()
-        plt.grid()
-        plt.savefig(output_file)
-        plt.close()
 
     def evaluate_model_polynomial(self, DTR, LTR, DTE, LTE, lambdas, degree, coef0, pi_t, output_dir):
         self.kernel = 'poly'
         self.degree = degree
         self.coef0 = coef0
         self.evaluate_model(DTR, LTR, DTE, LTE, lambdas, pi_t, output_dir, kernel_type='poly')
+
 
     def evaluate_model_rbf(self, DTR, LTR, DTE, LTE, lambdas, gammas, pi_t, output_dir):
         self.kernel = 'rbf'
@@ -591,24 +711,27 @@ class SVMClassifier:
         self.kernel = 'linear'
         self.evaluate_model(DTR, LTR, DTE, LTE, lambdas, pi_t, output_dir, kernel_type='linear')
 
-
 def compute_optimal_bayes_decisions(llrs, pi1, Cfn, Cfp):
     t = -np.log((pi1 * Cfn) / ((1 - pi1) * Cfp))
     return (llrs >= t).astype(int)
 
 
 def train_SVM(DTE, DTR, LTE, LTR):
+
     fraction = 0.1  # Use 10% of the data for initial testing
     DTR, LTR = reduce_dataset(DTR, LTR, fraction)
     lambdas = np.logspace(-5, 0, 11)
     pi_t = 0.1
     output_dir = 'Output/SVM_Results'
+
     # Normalize the data
     DTR_normalized = normalize_data(DTR)
     DTE_normalized = normalize_data(DTE)
+
     # Center the data
     DTR_centered, _ = center_data(DTR)
     DTE_centered, _ = center_data(DTE)
+
     # Linear SVM
     print("Evaluating Linear SVM")
     svm_classifier = SVMClassifier(kernel='linear')
