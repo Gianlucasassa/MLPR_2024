@@ -204,23 +204,36 @@ def plot_roc_curve(fpr, tpr, roc_auc, model_name, output_file):
     plt.savefig(output_file)
     plt.close()
 
-def plot_bayes_error(scores, labels, pi_values, output_file):
-    fnr = []
-    fpr = []
-    for pi in pi_values:
-        threshold = -np.log(pi / (1 - pi))
-        predictions = (scores >= threshold).astype(int)
-        fnr.append(np.mean(predictions[labels == 1] == 0))
-        fpr.append(np.mean(predictions[labels == 0] == 1))
 
-    plt.plot(pi_values, fnr, label='FNR')
-    plt.plot(pi_values, fpr, label='FPR')
-    plt.xlim([pi_values[0], pi_values[-1]])
-    plt.xlabel('log(π/(1-π))')
-    plt.ylabel('Error Rate')
+def plot_bayes_error(llrs, labels, effPriorLogOdds, output_file='bayes_error_plot.png'):
+    dcf = []
+    mindcf = []
+    for p in effPriorLogOdds:
+        pi1 = 1 / (1 + np.exp(-p))
+        thresholds = np.sort(llrs)
+        fnr, fpr = [], []
+
+        for threshold in thresholds:
+            predictions = (llrs >= threshold).astype(int)
+            fnr.append(np.mean(predictions[labels == 1] == 0))
+            fpr.append(np.mean(predictions[labels == 0] == 1))
+
+        dcf_value = pi1 * 1 * np.mean(predictions[labels == 1] == 0) + (1 - pi1) * 1 * np.mean(
+            predictions[labels == 0] == 1)
+        min_dcf_value = min([pi1 * 1 * fnr_i + (1 - pi1) * 1 * fpr_i for fnr_i, fpr_i in zip(fnr, fpr)])
+
+        dcf.append(dcf_value)
+        mindcf.append(min_dcf_value)
+
+    plt.plot(effPriorLogOdds, dcf, label='DCF', color='r')
+    plt.plot(effPriorLogOdds, mindcf, label='min DCF', color='b')
+    plt.ylim([0, 1.1])
+    plt.xlim([-3, 3])
+    plt.xlabel('Prior Log-Odds')
+    plt.ylabel('DCF value')
+    plt.legend()
+    plt.grid()
     plt.title('Bayes Error Plot')
-    plt.legend(loc='upper right')
-    plt.grid(True)
     plt.savefig(output_file)
     plt.close()
 
@@ -298,28 +311,28 @@ class LogRegClass:
         plt.savefig(output_file)
         plt.close()
 
-    def compute_dcf_at_threshold(self, predictions, labels, pi_t):
+    def compute_dcf_at_threshold(self, predictions, labels, pi_t, Cfn=1, Cfp=1):
         fnr = np.mean(predictions[labels == 1] == 0)
         fpr = np.mean(predictions[labels == 0] == 1)
-        dcf = pi_t * fnr + (1 - pi_t) * fpr
+        dcf = pi_t * Cfn * fnr + (1 - pi_t) * Cfp * fpr
         return dcf
 
-    def compute_dcf(self, scores, labels, pi_t):
+    def compute_dcf(self, scores, labels, pi_t, Cfn=1, Cfp=1):
         thresholds = np.sort(scores)
         min_dcf = float('inf')
         for t in thresholds:
             predictions = (scores >= t).astype(int)
-            dcf = self.compute_dcf_at_threshold(predictions, labels, pi_t)
+            dcf = self.compute_dcf_at_threshold(predictions, labels, pi_t, Cfn, Cfp)
             if dcf < min_dcf:
                 min_dcf = dcf
         return min_dcf
 
-    def compute_min_dcf(self, scores, labels, pi_t):
+    def compute_min_dcf(self, scores, labels, pi_t, Cfn=1, Cfp=1):
         thresholds = np.sort(scores)
         min_dcf = float('inf')
         for t in thresholds:
             predictions = (scores >= t).astype(int)
-            dcf = self.compute_dcf_at_threshold(predictions, labels, pi_t)
+            dcf = self.compute_dcf_at_threshold(predictions, labels, pi_t, Cfn, Cfp)
             if dcf < min_dcf:
                 min_dcf = dcf
         return min_dcf
@@ -415,7 +428,7 @@ def train_LR(DTE, DTR, LTE, LTR):
     LogRegClass.plot_error_rates(results, output_file='error_rates.png')
     # PROJECT PART
     # Change the Output paths to save them in the /Output folder
-    output_dir = "Output"
+    output_dir = "Output/LogisticRegression_1"
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
     lambdas = np.logspace(-4, 2, 13)
@@ -441,6 +454,19 @@ def train_LR(DTE, DTR, LTE, LTR):
             scores = model.predict(DTE_exp)
         else:
             scores = model.predict(DTE)
+
+        # Compute and remove the log-odds of the empirical prior for actual DCF
+        if 'Prior-Weighted' in model_key:
+            emp_prior = np.mean(LTR)
+            scores = scores - np.log(emp_prior / (1 - emp_prior))
+
+        # Compute actual DCF
+        actual_dcf = model.compute_dcf(scores, LTE, pi_t=0.1)
+        print(f"{model_name} Actual DCF: {actual_dcf}")
+
+        # Compute min DCF
+        min_dcf = model.compute_min_dcf(scores, LTE, pi_t=0.1)
+        print(f"{model_name} Min DCF: {min_dcf}")
 
         # Plot ROC curve
         fpr, tpr, _ = roc_curve(LTE, scores)

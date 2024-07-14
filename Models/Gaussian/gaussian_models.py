@@ -358,7 +358,7 @@ def train_MVG_1(DTE, DTR, LTE, LTR):
     # Tied Covariance
     tied_classifier = GaussianClassifier(model_type='TiedCovariance')
     evaluate_model(tied_classifier, 'TiedCovariance', DTR, LTR, DTE, LTE, output_dir)
-    # Project-specific implementation
+
     output_dir = 'Output/UnivariateGaussians'
     mvg_classifier.fit_univariate_gaussian_models(DTR, LTR, output_dir)
     classes = np.unique(LTR)
@@ -414,30 +414,45 @@ def train_MVG(DTE, DTR, LTE, LTR):
         'NaiveBayes': GaussianClassifier(model_type='NaiveBayes'),
         'TiedCovariance': GaussianClassifier(model_type='TiedCovariance')
     }
+
     priors = [0.5, 0.9, 0.1]
     costs = [(1.0, 1.0), (1.0, 9.0), (9.0, 1.0)]
-    for model_name, model in models.items():
-        model.train(DTR, LTR)
-    for pi1, (Cfn, Cfp) in [(pi1, cost) for pi1 in priors for cost in costs]:
-        print(f"Analyzing for pi1={pi1}, Cfn={Cfn}, Cfp={Cfp}")
-        for model_name, model in models.items():
-            logS = model.predict(DTE)
-            print(f"{model_name} LLRs: {logS[:5]}")  # Print first 5 LLRs for inspection
-            predictions = model.compute_predictions(logS)
-            print(f"{model_name} Predictions: {predictions[:5]}")  # Print first 5 predictions for inspection
-            dcf = compute_dcf(predictions, LTE, pi1, Cfn, Cfp)
-            min_dcf = compute_min_dcf(logS, LTE, pi1, Cfn, Cfp)
-            print(f"{model_name} Normalized DCF: {dcf}")
-            print(f"{model_name} Min DCF: {min_dcf}")
-    # Plotting functions and other evaluations
-    for model_name, model in models.items():
-        llrs = model.compute_llrs(model.predict(DTE))
-        fpr, tpr, _ = roc_curve(LTE, llrs)
-        roc_auc = auc(fpr, tpr)
-        plot_roc_curve(fpr, tpr, roc_auc, model_name, os.path.join(output_dir, f'roc_curve_{model_name}.png'))
+    pca_dims = [2, 4, 6, None]  # None means no PCA
 
-        plot_bayes_error(llrs, LTE, np.linspace(-3, 3, 21),
-                         os.path.join(output_dir, f'bayes_error_plot_{model_name}.png'))
+    for pca_dim in pca_dims:
+        if pca_dim is not None:
+            # Apply PCA
+            DTR_pca, P_pca = apply_PCA_from_dim(DTR, pca_dim)
+            DTE_pca = apply_pca(DTE, P_pca)
+        else:
+            # No PCA
+            DTR_pca, DTE_pca = DTR, DTE
+
+        for model_name, model in models.items():
+            model.train(DTR_pca, LTR)
+
+        for pi1, (Cfn, Cfp) in [(pi1, cost) for pi1 in priors for cost in costs]:
+            print(f"Analyzing for pi1={pi1}, Cfn={Cfn}, Cfp={Cfp}, PCA dim={pca_dim}")
+            for model_name, model in models.items():
+                logS = model.predict(DTE_pca)
+                # print(f"{model_name} LLRs: {logS[:5]}")  # Print first 5 LLRs for inspection
+                predictions = model.compute_predictions(logS)
+                # print(f"{model_name} Predictions: {predictions[:5]}")  # Print first 5 predictions for inspection
+                dcf = compute_dcf(predictions, LTE, pi1, Cfn, Cfp)
+                min_dcf = compute_min_dcf(logS, LTE, pi1, Cfn, Cfp)
+                print(f"{model_name} Normalized DCF: {dcf}")
+                print(f"{model_name} Min DCF: {min_dcf}")
+
+        # Plotting functions and other evaluations
+        for model_name, model in models.items():
+            llrs = model.compute_llrs(model.predict(DTE_pca))
+            fpr, tpr, _ = roc_curve(LTE, llrs)
+            roc_auc = auc(fpr, tpr)
+            plot_roc_curve(fpr, tpr, roc_auc, f"{model_name}_PCA_{pca_dim}", os.path.join(output_dir, f'roc_curve_{model_name}_PCA_{pca_dim}.png'))
+
+            plot_bayes_error(llrs, LTE, np.linspace(-3, 3, 21),
+                             os.path.join(output_dir, f'bayes_error_plot_{model_name}_PCA_{pca_dim}.png'))
+
 
 
 

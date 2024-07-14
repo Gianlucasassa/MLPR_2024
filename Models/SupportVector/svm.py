@@ -370,7 +370,6 @@ from scipy.optimize import minimize
 
 from sklearn.metrics import roc_curve, auc
 
-
 def normalize_data(D):
     mean = np.mean(D, axis=1, keepdims=True)
     std = np.std(D, axis=1, keepdims=True)
@@ -378,17 +377,21 @@ def normalize_data(D):
     print(f"Data normalized: mean={np.mean(normalized_D)}, std={np.std(normalized_D)}")
     return normalized_D
 
+
 def center_data(D):
     mean = np.mean(D, axis=1, keepdims=True)
     centered_D = D - mean
     print(f"Data centered: mean={np.mean(centered_D)}")
     return centered_D, mean
 
+
 def vcol(x):
     return x.reshape((x.size, 1))
 
+
 def vrow(x):
     return x.reshape((1, x.size))
+
 
 def reduce_dataset(D, L, fraction=0.1, seed=42):
     np.random.seed(seed)
@@ -396,6 +399,7 @@ def reduce_dataset(D, L, fraction=0.1, seed=42):
     indices = np.random.choice(D.shape[1], n_samples, replace=False)
     print(f"Taken {n_samples} samples out of {D.shape[1]}")
     return D[:, indices], L[indices]
+
 
 class SVMClassifier:
     def __init__(self, kernel='linear', C=1.0, gamma=1.0, degree=2, coef0=1.0):
@@ -459,8 +463,8 @@ class SVMClassifier:
 
         primalLoss, dualLoss = self.primalLoss(w_hat, DTR_EXT, ZTR), -fOpt(alphaStar)[0]
         print('SVM - C %e - primal loss %e - dual loss %e - duality gap %e' % (
-        self.C, primalLoss, dualLoss, primalLoss - dualLoss))
-        print(f"Number of support vectors: {len(self.support_vector_labels)}")
+            self.C, primalLoss, dualLoss, primalLoss - dualLoss))
+        # print(f"Number of support vectors: {len(self.support_vector_labels)}")
 
     def primalLoss(self, w_hat, DTR_EXT, ZTR):
         S = (vrow(w_hat) @ DTR_EXT).ravel()
@@ -470,7 +474,8 @@ class SVMClassifier:
         if self.kernel == 'linear':
             return np.dot(self.w.T, D) + self.b
         else:
-            K = np.array([[self.compute_kernel(self.support_vectors[:, i], D[:, j]) for j in range(D.shape[1])] for i in range(self.support_vectors.shape[1])])
+            K = np.array([[self.compute_kernel(self.support_vectors[:, i], D[:, j]) for j in range(D.shape[1])] for i in
+                          range(self.support_vectors.shape[1])])
             return np.dot((self.alpha * self.support_vector_labels), K) + self.b
 
     def predict(self, D):
@@ -523,26 +528,18 @@ class SVMClassifier:
         plt.savefig(output_file)
         plt.close()
 
-    def plot_dcf(self, lambdas, dcf_values, min_dcf_values, output_file='dcf_plot.png'):
-        plt.figure()
-        plt.plot(lambdas, dcf_values, label='Actual DCF')
-        plt.plot(lambdas, min_dcf_values, label='Min DCF')
-        plt.xscale('log')
-        plt.xlabel('Lambda')
-        plt.ylabel('DCF')
-        plt.legend()
-        plt.grid()
-        plt.savefig(output_file)
-        plt.close()
+    def evaluate_model(self, DTR, LTR, DTE, LTE, lambdas, pi_t, output_dir, kernel_type, gamma=None):
 
-    def evaluate_model(self, DTR, LTR, DTE, LTE, lambdas, pi_t, output_dir):
         os.makedirs(output_dir, exist_ok=True)
+
         dcf_values = []
         min_dcf_values = []
         successful_lambdas = []
 
         for l in lambdas:
             self.C = l
+            if gamma is not None:
+                self.gamma = gamma
             try:
                 self.train(DTR, LTR)
                 print(f"Training with C={l}, number of support vectors: {len(self.support_vector_labels)}")
@@ -554,31 +551,51 @@ class SVMClassifier:
                 successful_lambdas.append(l)
                 error_rate = self.compute_error_rate(self.compute_predictions(scores), LTE)
                 print(f"Lambda: {l}, DCF: {dcf}, Min DCF: {min_dcf}, Error Rate: {error_rate}")
-                print(f"Scores: {scores[:10]}")
-                print(f"Predictions: {self.compute_predictions(scores)[:10]}")
             except ValueError as e:
                 print(f"Skipping C={l} due to error: {e}")
+
+        plot_title = f'{kernel_type.capitalize()} SVM - DCF vs Lambda'
+        if gamma is not None:
+            plot_title += f' (gamma={gamma})'
+        self.plot_dcf(successful_lambdas, dcf_values, min_dcf_values, os.path.join(output_dir,
+                                                                                   f'dcf_plot_{kernel_type}{"_gamma_" + str(gamma) if gamma else ""}.png'),
+                      plot_title)
+
+    def plot_dcf(self, lambdas, dcf_values, min_dcf_values, output_file='dcf_plot.png', plot_title='DCF vs Lambda'):
+        plt.figure()
+        plt.plot(lambdas, dcf_values, label='Actual DCF')
+        plt.plot(lambdas, min_dcf_values, label='Min DCF')
+        plt.xscale('log')
+        plt.xlabel('Lambda')
+        plt.ylabel('DCF')
+        plt.title(plot_title)
+        plt.legend()
+        plt.grid()
+        plt.savefig(output_file)
+        plt.close()
 
     def evaluate_model_polynomial(self, DTR, LTR, DTE, LTE, lambdas, degree, coef0, pi_t, output_dir):
         self.kernel = 'poly'
         self.degree = degree
         self.coef0 = coef0
-        self.evaluate_model(DTR, LTR, DTE, LTE, lambdas, pi_t, output_dir)
+        self.evaluate_model(DTR, LTR, DTE, LTE, lambdas, pi_t, output_dir, kernel_type='poly')
 
     def evaluate_model_rbf(self, DTR, LTR, DTE, LTE, lambdas, gammas, pi_t, output_dir):
         self.kernel = 'rbf'
         for gamma in gammas:
             self.gamma = gamma
             gamma_output_dir = os.path.join(output_dir, f'gamma_{gamma}')
-            self.evaluate_model(DTR, LTR, DTE, LTE, lambdas, pi_t, gamma_output_dir)
+            self.evaluate_model(DTR, LTR, DTE, LTE, lambdas, pi_t, gamma_output_dir, kernel_type='rbf', gamma=gamma)
 
     def evaluate_model_linear(self, DTR, LTR, DTE, LTE, lambdas, pi_t, output_dir):
         self.kernel = 'linear'
-        self.evaluate_model(DTR, LTR, DTE, LTE, lambdas, pi_t, output_dir)
+        self.evaluate_model(DTR, LTR, DTE, LTE, lambdas, pi_t, output_dir, kernel_type='linear')
+
 
 def compute_optimal_bayes_decisions(llrs, pi1, Cfn, Cfp):
     t = -np.log((pi1 * Cfn) / ((1 - pi1) * Cfp))
     return (llrs >= t).astype(int)
+
 
 def train_SVM(DTE, DTR, LTE, LTR):
     fraction = 0.1  # Use 10% of the data for initial testing
@@ -595,17 +612,17 @@ def train_SVM(DTE, DTR, LTE, LTR):
     # Linear SVM
     print("Evaluating Linear SVM")
     svm_classifier = SVMClassifier(kernel='linear')
-    svm_classifier.evaluate_model_linear(DTR_normalized, LTR, DTE_normalized, LTE, lambdas, pi_t, output_dir)
+    svm_classifier.evaluate_model_linear(DTR_normalized, LTR, DTE_normalized, LTE, lambdas, pi_t, os.path.join(output_dir, 'linear'))
     print("Evaluating Linear SVM - centered")
     svm_classifier.evaluate_model_linear(DTR_centered, LTR, DTE_centered, LTE, lambdas, pi_t,
-                                         os.path.join(output_dir, 'centered'))
+                                         os.path.join(output_dir, 'linear_centered'))
     # Polynomial SVM
     print("Evaluating Polynomial SVM")
     degree = 2
     coef0 = 1
     svm_classifier = SVMClassifier(kernel='poly', degree=degree, coef0=coef0)
     svm_classifier.evaluate_model_polynomial(DTR_normalized, LTR, DTE_normalized, LTE, lambdas, degree, coef0, pi_t,
-                                             output_dir)
+                                             os.path.join(output_dir, 'poly'))
     # Optional: Polynomial kernel with d = 4, c = 1, ξ = 0
     print("Evaluating Polynomial SVM with d=4")
     degree = 4
@@ -616,4 +633,4 @@ def train_SVM(DTE, DTR, LTE, LTR):
     print("Evaluating RBF SVM")
     gammas = np.logspace(-4, -1, 4)
     svm_classifier = SVMClassifier(kernel='rbf')
-    svm_classifier.evaluate_model_rbf(DTR_normalized, LTR, DTE_normalized, LTE, lambdas, gammas, pi_t, output_dir)
+    svm_classifier.evaluate_model_rbf(DTR_normalized, LTR, DTE_normalized, LTE, lambdas, gammas, pi_t, os.path.join(output_dir, 'rbf'))

@@ -306,23 +306,23 @@ def main(type, mode):
 
     ############################ PCA & LDA - LAB 3  ############################
 
-    PCA_LDA_analysis(DTE, DTR, LTR, LTE)
+    #PCA_LDA_analysis(DTE, DTR, LTR, LTE)
 
     ############################ UNIVARIATE GAUSSIAN MODELS - LAB 4 ############################
 
-    Univariate_model(DTE, DTR, LTE, LTR)
+    #Univariate_model(DTE, DTR, LTE, LTR)
 
     ############################ MULTIVARIATE GAUSSIAN MODELS - LAB 5 ############################
 
-    train_MVG_1(DTE, DTR, LTE, LTR)
+    #train_MVG_1(DTE, DTR, LTE, LTR)
 
     ############################ MULTIVARIATE GAUSSIAN MODELS - PLOTS FOR LAB 7 ############################
 
-    train_MVG(DTE, DTR, LTE, LTR)
+    #train_MVG(DTE, DTR, LTE, LTR)
 
     ############################ LOGISTIC REGRESSION - LAB 8 ############################
 
-    train_LR(DTE, DTR, LTE, LTR)
+    #train_LR(DTE, DTR, LTE, LTR)
 
     ############################ SVM - LAB 9 ############################
 
