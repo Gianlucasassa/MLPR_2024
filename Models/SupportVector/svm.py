@@ -718,8 +718,8 @@ def compute_optimal_bayes_decisions(llrs, pi1, Cfn, Cfp):
 
 def train_SVM(DTE, DTR, LTE, LTR):
 
-    fraction = 0.1  # Use 10% of the data for initial testing
-    DTR, LTR = reduce_dataset(DTR, LTR, fraction)
+    #fraction = 0.1  # Use 10% of the data for initial testing
+    #DTR, LTR = reduce_dataset(DTR, LTR, fraction)
     lambdas = np.logspace(-5, 0, 11)
     pi_t = 0.1
     output_dir = 'Output/SVM_Results'
