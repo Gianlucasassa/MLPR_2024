@@ -5,3 +5,14 @@ OLD (all made by chatGPT, too bad): https://docs.google.com/document/d/1PtQXZabY
 
 LAST YEAR: https://docs.google.com/document/d/1sUG8KczZRF8QGDui_OFOQ2i5LV2ePFFaBQugbbVIB14/edit?usp=sharing
 
+
+
+PLOTS:
+
+Dataset - Output/FeatureDistributions and Output/FeaturePairPlots and Output/Covariances
+PCA/LDA - see report, there's written each path for each plot
+MVG - Output/MVG and 'Output/ClassifierResults' and 'Output/UnivariateGaussians'
+LR - Output/LogisticRegression_1
+SVM - Output/SVM_Results
+GMM - (work in progress) Output/GMM
+Calibration and fusion - (work in progress)

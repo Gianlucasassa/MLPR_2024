@@ -337,6 +337,32 @@ class LogRegClass:
                 min_dcf = dcf
         return min_dcf
 
+        # functions calibration
+
+    def fit(self, X, y):
+        # Ensure the shapes are as expected
+        assert X.shape[0] == y.shape[0], "Mismatch in the number of samples between X and y"
+        print(f"Shapes before transpose: X.shape={X.shape}, y.shape={y.shape}")
+
+        self.DTR = X.T
+        self.LTR = y
+        print(f"Shapes after transpose: self.DTR.shape={self.DTR.shape}, self.LTR.shape={self.LTR.shape}")
+
+        # Ensure dimensions match
+        if self.DTR.shape[1] != self.LTR.shape[0]:
+            raise ValueError(
+                f"Mismatch in number of samples: DTR.shape[1]={self.DTR.shape[1]} but LTR.shape[0]={self.LTR.shape[0]}")
+
+        x0 = np.zeros(self.DTR.shape[0] + 1)
+        opt = scipy.optimize.fmin_l_bfgs_b(func=self.logreg_obj, x0=x0, fprime=self.logreg_obj_grad, approx_grad=False)
+        self.w, self.b = opt[0][:-1], opt[0][-1]
+        print(f"Optimization result: w={self.w}, b={self.b}")
+
+    def predict_proba(self, X):
+        scores = np.dot(self.w.T, X.T) + self.b
+        probs = 1 / (1 + np.exp(-scores))
+        return np.vstack([1 - probs, probs]).T
+
 
 
 def logreg_obj(v, DTR, LTR, l):

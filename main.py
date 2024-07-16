@@ -4,7 +4,7 @@ import os
 import argparse
 
 from Models.LogisticRegression.logistic_regression import *
-from Models.MixtureModels.gmm import evaluate_classification, GMMClass, train_GMM
+from Models.MixtureModels.gmm import GMMClass, train_GMM
 from load import *
 
 from Preprocess.DatasetPlots import *
@@ -27,19 +27,17 @@ from Models.LogisticRegression.logistic_regression import *
 
 from sklearn.metrics import roc_curve, auc, ConfusionMatrixDisplay
 
-
-def train_classifiers(DTR, LTR):
-    gmm_model = GMMClass()
-    gmm_model.train(DTR, LTR)
-
-    lr_model = LogRegClass(DTR, LTR, l=1.0)
-    lr_model.train()
-
-    svm_model = SVMClassifier(kernel='linear')
-    svm_model.train(DTR, LTR)
-
-    return gmm_model, lr_model, svm_model
-
+# def train_classifiers(DTR, LTR):
+#     gmm_model = GMMClass()
+#     gmm_model.train(DTR, LTR)
+#
+#     lr_model = LogRegClass(DTR, LTR, l=1.0)
+#     lr_model.train()
+#
+#     svm_model = SVMClassifier(kernel='linear')
+#     svm_model.train(DTR, LTR)
+#
+#     return gmm_model, lr_model, svm_model
 
 def split_db_2to1(D, L, seed=0):
     nTrain = int(D.shape[1] * 2.0 / 3.0)
@@ -54,8 +52,8 @@ def split_db_2to1(D, L, seed=0):
     return (DTR, LTR), (DTE, LTE)
 
 
-def compute_llrs(logS):
-    return logS[1] - logS[0]
+# def compute_llrs(logS):
+#     return logS[1] - logS[0]
 
 
 def calibrate_scores(scores, labels):
@@ -105,7 +103,7 @@ def compute_dcf(scores, labels, pi_t):
     return min_dcf
 
 
-def plot_roc_curve(fpr, tpr, roc_auc, output_file):
+def plot_roc_curve(fpr, tpr, roc_auc, model_name, output_file):
     plt.figure()
     plt.plot(fpr, tpr, color='darkorange', lw=2, label=f'ROC curve (area = {roc_auc:0.2f})')
     plt.plot([0, 1], [0, 1], color='navy', lw=2, linestyle='--')
@@ -113,171 +111,515 @@ def plot_roc_curve(fpr, tpr, roc_auc, output_file):
     plt.ylim([0.0, 1.05])
     plt.xlabel('False Positive Rate')
     plt.ylabel('True Positive Rate')
-    plt.title('Receiver Operating Characteristic')
+    plt.title(f'Receiver Operating Characteristic - {model_name}')
     plt.legend(loc="lower right")
     plt.grid(True)
     plt.savefig(output_file)
     plt.close()
 
 
-def plot_bayes_error(scores, labels, pi_values, output_file):
-    fnr = []
-    fpr = []
-    for pi in pi_values:
-        threshold = -np.log(pi / (1 - pi))
-        predictions = (scores >= threshold).astype(int)
-        fnr.append(np.mean(predictions[labels == 1] == 0))
-        fpr.append(np.mean(predictions[labels == 0] == 1))
+def plot_bayes_error(llrs, labels, effPriorLogOdds, output_file='bayes_error_plot.png'):
+    def compute_optimal_bayes_decisions(llrs, pi1, Cfn, Cfp):
+        thresholds = np.log(pi1 / (1 - pi1))
+        return (llrs >= thresholds).astype(int)
 
-    plt.plot(pi_values, fnr, label='FNR')
-    plt.plot(pi_values, fpr, label='FPR')
-    plt.xlim([pi_values[0], pi_values[-1]])
-    plt.xlabel('log(π/(1-π))')
-    plt.ylabel('Error Rate')
+    def compute_confusion_matrix(predictions, labels):
+        TP = np.sum((predictions == 1) & (labels == 1))
+        TN = np.sum((predictions == 0) & (labels == 0))
+        FP = np.sum((predictions == 1) & (labels == 0))
+        FN = np.sum((predictions == 0) & (labels == 1))
+        return np.array([[TN, FP], [FN, TP]])
+
+    def compute_bayes_risk(confusion_matrix, pi1, Cfn, Cfp):
+        FN, FP = confusion_matrix[1, 0], confusion_matrix[0, 1]
+        N0, N1 = confusion_matrix[0, 0] + confusion_matrix[0, 1], confusion_matrix[1, 0] + confusion_matrix[1, 1]
+        Pfn = FN / N1
+        Pfp = FP / N0
+        return pi1 * Cfn * Pfn + (1 - pi1) * Cfp * Pfp
+
+    def compute_normalized_dcf(bayes_risk, pi1, Cfn, Cfp):
+        dummy_risk = min(pi1 * Cfn, (1 - pi1) * Cfp)
+        return bayes_risk / dummy_risk
+
+    out_dir = os.path.dirname(output_file)
+    os.makedirs(out_dir, exist_ok=True)
+    dcf = []
+    mindcf = []
+    for p in effPriorLogOdds:
+        pi1 = 1 / (1 + np.exp(-p))
+        decisions = compute_optimal_bayes_decisions(llrs, pi1, 1, 1)
+        confusion_matrix = compute_confusion_matrix(decisions, labels)
+        bayes_risk = compute_bayes_risk(confusion_matrix, pi1, 1, 1)
+        normalized_dcf = compute_normalized_dcf(bayes_risk, pi1, 1, 1)
+        dcf.append(normalized_dcf)
+
+        min_dcf_value = compute_min_dcf(llrs, labels, pi1, 1, 1)
+        mindcf.append(min_dcf_value)
+
+    plt.plot(effPriorLogOdds, dcf, label='DCF', color='r')
+    plt.plot(effPriorLogOdds, mindcf, label='min DCF', color='b')
+    plt.ylim([0, 1.1])
+    plt.xlim([-4, 4])
+    plt.xlabel('Prior Log-Odds')
+    plt.ylabel('DCF value')
+    plt.legend()
+    plt.grid()
     plt.title('Bayes Error Plot')
-    plt.legend(loc='upper right')
-    plt.grid(True)
     plt.savefig(output_file)
     plt.close()
 
 
-def single_fold_calibration(D, L, eval_data, eval_labels, system_1_scores, system_2_scores):
-    # Split data
-    n_train = int(0.7 * D.shape[1])
-    D_train, L_train = D[:, :n_train], L[:n_train]
-    D_valid, L_valid = D[:, n_train:], L[n_train:]
-
-    # Calibrate System 1
-    system_1_calibrated = calibrate_scores(system_1_scores[:n_train], L_train)
-
-    # Calibrate System 2
-    system_2_calibrated = calibrate_scores(system_2_scores[:n_train], L_train)
-
-    # Compute DCF for validation
-    system_1_dcf = compute_dcf(system_1_calibrated, L_valid, 0.5)
-    system_2_dcf = compute_dcf(system_2_calibrated, L_valid, 0.5)
-    fusion_scores = 0.5 * (system_1_calibrated + system_2_calibrated)
-    fusion_dcf = compute_dcf(fusion_scores, L_valid, 0.5)
-
-    # Compute DCF for evaluation
-    system_1_eval_dcf = compute_dcf(system_1_scores[n_train:], eval_labels, 0.5)
-    system_2_eval_dcf = compute_dcf(system_2_scores[n_train:], eval_labels, 0.5)
-    fusion_eval_scores = 0.5 * (system_1_scores[n_train:] + system_2_scores[n_train:])
-    fusion_eval_dcf = compute_dcf(fusion_eval_scores, eval_labels, 0.5)
-
-    return system_1_dcf, system_2_dcf, fusion_dcf, system_1_eval_dcf, system_2_eval_dcf, fusion_eval_dcf
+def compute_min_dcf(llrs, labels, pi1, Cfn, Cfp):
+    thresholds = np.sort(llrs)
+    min_dcf = float('inf')
+    for threshold in thresholds:
+        predictions = (llrs >= threshold).astype(int)
+        confusion_matrix = compute_confusion_matrix(predictions, labels)
+        bayes_risk = compute_bayes_risk(confusion_matrix, pi1, Cfn, Cfp)
+        normalized_dcf = compute_normalized_dcf(bayes_risk, pi1, Cfn, Cfp)
+        if normalized_dcf < min_dcf:
+            min_dcf = normalized_dcf
+    return min_dcf
 
 
-def k_fold_calibration(D, L, eval_data, eval_labels, system_1_scores, system_2_scores, k=5):
-    fold_size = D.shape[1] // k
-    system_1_dcfs = []
-    system_2_dcfs = []
-    fusion_dcfs = []
-
-    for i in range(k):
-        val_start = i * fold_size
-        val_end = (i + 1) * fold_size
-        D_train = np.hstack([D[:, :val_start], D[:, val_end:]])
-        L_train = np.hstack([L[:val_start], L[val_end:]])
-        D_val = D[:, val_start:val_end]
-        L_val = L[val_start:val_end]
-
-        # Calibrate System 1
-        system_1_calibrated = calibrate_scores(system_1_scores[val_start:val_end], L_train)
-
-        # Calibrate System 2
-        system_2_calibrated = calibrate_scores(system_2_scores[val_start:val_end], L_train)
-
-        # Compute DCF
-        system_1_dcf = compute_dcf(system_1_calibrated, L_val, 0.5)
-        system_2_dcf = compute_dcf(system_2_calibrated, L_val, 0.5)
-        fusion_scores = 0.5 * (system_1_calibrated + system_2_calibrated)
-        fusion_dcf = compute_dcf(fusion_scores, L_val, 0.5)
-
-        system_1_dcfs.append(system_1_dcf)
-        system_2_dcfs.append(system_2_dcf)
-        fusion_dcfs.append(fusion_dcf)
-
-    # Compute average DCF for each system and fusion
-    avg_system_1_dcf = np.mean(system_1_dcfs)
-    avg_system_2_dcf = np.mean(system_2_dcfs)
-    avg_fusion_dcf = np.mean(fusion_dcfs)
-
-    # Compute DCF for evaluation
-    system_1_eval_dcf = compute_dcf(system_1_scores, eval_labels, 0.5)
-    system_2_eval_dcf = compute_dcf(system_2_scores, eval_labels, 0.5)
-    fusion_eval_scores = 0.5 * (system_1_scores + system_2_scores)
-    fusion_eval_dcf = compute_dcf(fusion_eval_scores, eval_labels, 0.5)
-
-    return avg_system_1_dcf, avg_system_2_dcf, avg_fusion_dcf, system_1_eval_dcf, system_2_eval_dcf, fusion_eval_dcf
+"""
+CALIB
+"""
 
 
-def fuse_scores(score_list):
-    fused_scores = np.mean(np.array(score_list), axis=0)
-    return fused_scores
+def single_fold_calibration(DTR, LTR, DTE, LTE, model, prior=0.2):
+    # Split the training data into calibration training and validation sets
+    calibration_train_idx = np.arange(0, DTR.shape[1], 3)
+    calibration_val_idx = np.setdiff1d(np.arange(DTR.shape[1]), calibration_train_idx)
 
+    DTR_cal_train = DTR[:, calibration_train_idx]
+    LTR_cal_train = LTR[calibration_train_idx]
+    DTR_cal_val = DTR[:, calibration_val_idx]
+    LTR_cal_val = LTR[calibration_val_idx]
+
+    # Train the model on the calibration training set
+    if isinstance(model, LogRegClass):
+        model.DTR = DTR_cal_train
+        model.LTR = LTR_cal_train
+        model.train()
+    elif isinstance(model, SVMClassifier):
+        model.train(DTR_cal_train, LTR_cal_train)
+    elif isinstance(model, GMMClass):
+        model.train_GMM_LBG_EM(DTR_cal_train, numComponents=8, psiEig=0.01)
+
+    scores_cal_val = model.predict(DTR_cal_val)
+    print(f"SHAPE OF SCORE CAL VAL = {scores_cal_val.shape}")
+    scores_cal_val = scores_cal_val.flatten()
+    print(f"SHAPE OF SCORE CAL VAL FLATTENED = {scores_cal_val.shape}")
+
+    # Fit a logistic regression model for calibration
+    lr = LogRegClass(None, None, 0)
+    lr.fit(scores_cal_val.reshape(-1, 1), LTR_cal_val)
+
+    # Apply the calibration model to the test set
+    scores_test = model.predict(DTE)
+    scores_test = scores_test.flatten()
+    calibrated_scores = lr.predict_proba(scores_test.reshape(-1, 1))[:, 1]
+
+    minDCF = compute_minDCF_binary_fast(calibrated_scores, LTE, prior, 1, 1)
+    actDCF = compute_actDCF_binary_fast(calibrated_scores, LTE, prior, 1, 1)
+
+    return minDCF, actDCF, calibrated_scores
+
+def generate_kfold_splits(DTR, LTR, K=5):
+    indices = np.arange(DTR.shape[1])
+    np.random.shuffle(indices)
+    folds = np.array_split(indices, K)
+    return folds
+
+def kfold_calibration(DTR, LTR, model, splits, prior=0.2):
+    K = len(splits)
+    calibrated_scores_list = []
+    all_labels = []
+
+    for i in range(K):
+        train_idx = np.hstack([splits[j] for j in range(K) if j != i])
+        val_idx = splits[i]
+
+        DTR_fold = DTR[:, train_idx]
+        LTR_fold = LTR[train_idx]
+        DTE_fold = DTR[:, val_idx]
+        LTE_fold = LTR[val_idx]
+
+        if isinstance(model, LogRegClass):
+            model.DTR = DTR_fold
+            model.LTR = LTR_fold
+            model.train()
+        elif isinstance(model, SVMClassifier):
+            model.train(DTR_fold, LTR_fold)
+        elif isinstance(model, GMMClass):
+            model.train_GMM_LBG_EM(DTR_fold, numComponents=8, psiEig=0.01)
+
+        fold_scores = model.predict(DTE_fold)
+        fold_scores = fold_scores.flatten()
+
+        # Fit a logistic regression model for calibration
+        lr = LogRegClass(None, None, 0)
+        lr.fit(fold_scores.reshape(-1, 1), LTE_fold)
+        calibrated_fold_scores = lr.predict_proba(fold_scores.reshape(-1, 1))[:, 1]
+        calibrated_scores_list.append(calibrated_fold_scores)
+        all_labels.append(LTE_fold)
+
+        # Debug print statements
+        print(f"Fold {i} - Model: {type(model).__name__}")
+        print(f"Train indices: {train_idx[:10]}... Val indices: {val_idx[:10]}...")
+        print(f"LTR_fold: {LTR_fold[:10]}... LTE_fold: {LTE_fold[:10]}")
+        print(f"Fold scores shape: {fold_scores.shape} - Calibrated fold scores shape: {calibrated_fold_scores.shape}")
+        print(f"Fold labels shape: {LTE_fold.shape}")
+
+    # Combine the calibrated scores and labels from all folds
+    calibrated_scores = np.hstack(calibrated_scores_list)
+    all_labels = np.hstack(all_labels)
+
+    # Debug prints
+    print(f"All calibrated scores shape: {calibrated_scores.shape}")
+    print(f"All labels shape: {all_labels.shape}")
+
+    minDCF = compute_minDCF_binary_fast(calibrated_scores, all_labels, prior, 1, 1)
+    actDCF = compute_actDCF_binary_fast(calibrated_scores, all_labels, prior, 1, 1)
+
+    return minDCF, actDCF, calibrated_scores, all_labels
+
+
+def score_level_fusion(scores1, scores2, L, prior=0.2):
+    fused_scores = np.vstack((scores1, scores2)).T
+
+    lr = LogRegClass(None, None, 0)
+    assert fused_scores.shape[0] == L.shape[0], "Mismatch in the number of samples between fused scores and labels"
+    lr.fit(fused_scores, L)
+    calibrated_fusion_scores = lr.predict_proba(fused_scores)[:, 1]
+
+    minDCF = compute_minDCF_binary_fast(calibrated_fusion_scores, L, prior, 1, 1)
+    actDCF = compute_actDCF_binary_fast(calibrated_fusion_scores, L, prior, 1, 1)
+
+    return minDCF, actDCF, calibrated_fusion_scores
+
+
+def plot_bayes_error_with_calibration(llrs, labels, effPriorLogOdds, output_file='bayes_error_plot.png'):
+    dcf = []
+    mindcf = []
+    for p in effPriorLogOdds:
+        pi1 = 1 / (1 + np.exp(-p))
+        decisions = compute_optimal_Bayes_binary_llr(llrs, pi1, 1, 1)
+        confusion_matrix = compute_confusion_matrix(decisions, labels)
+        bayes_risk = compute_bayes_risk(confusion_matrix, pi1, 1, 1)
+        normalized_dcf = compute_normalized_dcf(bayes_risk, pi1, 1, 1)
+        dcf.append(normalized_dcf)
+
+        min_bayes_risk = compute_bayes_risk(confusion_matrix, pi1, 1, 1)
+        min_normalized_dcf = compute_normalized_dcf(min_bayes_risk, pi1, 1, 1)
+        mindcf.append(min_normalized_dcf)
+
+    plt.plot(effPriorLogOdds, dcf, label='DCF', color='r')
+    plt.plot(effPriorLogOdds, mindcf, label='min DCF', color='b')
+    plt.ylim([0, 1.1])
+    plt.xlim([-3, 3])
+    plt.xlabel('Prior Log-Odds')
+    plt.ylabel('DCF value')
+    plt.legend()
+    plt.grid()
+    plt.title('Bayes Error Plot')
+    plt.savefig(output_file)
+    plt.close()
+
+
+# Define functions for computing DCF
+def compute_confusion_matrix(predictedLabels, classLabels):
+    nClasses = classLabels.max() + 1
+    M = np.zeros((nClasses, nClasses), dtype=np.int32)
+    for i in range(classLabels.size):
+        M[predictedLabels[i], classLabels[i]] += 1
+    return M
+
+
+def compute_optimal_Bayes_binary_llr(llr, prior, Cfn, Cfp):
+    th = -np.log((prior * Cfn) / ((1 - prior) * Cfp))
+    return np.int32(llr > th)
+
+
+def compute_empirical_Bayes_risk_binary(predictedLabels, classLabels, prior, Cfn, Cfp, normalize=True):
+    M = compute_confusion_matrix(predictedLabels, classLabels)  # Confusion matrix
+    Pfn = M[0, 1] / (M[0, 1] + M[1, 1])
+    Pfp = M[1, 0] / (M[0, 0] + M[1, 0])
+    bayesError = prior * Cfn * Pfn + (1 - prior) * Cfp * Pfp
+    if normalize:
+        return bayesError / np.minimum(prior * Cfn, (1 - prior) * Cfp)
+    return bayesError
+
+
+# Compute empirical Bayes (DCF or actDCF) risk from llr with optimal Bayes decisions
+def compute_actDCF_binary_fast(llr, classLabels, prior, Cfn, Cfp, normalize=True):
+    predictedLabels = compute_optimal_Bayes_binary_llr(llr, prior, Cfn, Cfp)
+    return compute_empirical_Bayes_risk_binary(predictedLabels, classLabels, prior, Cfn, Cfp, normalize=normalize)
+
+
+def compute_Pfn_Pfp_allThresholds_fast(llr, classLabels):
+    llrSorter = np.argsort(llr)
+    llrSorted = llr[llrSorter]  # We sort the llrs
+    classLabelsSorted = classLabels[llrSorter]  # we sort the labels so that they are aligned to the llrs
+
+    Pfp = []
+    Pfn = []
+
+    nTrue = (classLabelsSorted == 1).sum()
+    nFalse = (classLabelsSorted == 0).sum()
+    nFalseNegative = 0  # With the left-most theshold all samples are assigned to class 1
+    nFalsePositive = nFalse
+
+    Pfn.append(nFalseNegative / nTrue)
+    Pfp.append(nFalsePositive / nFalse)
+
+    for idx in range(len(llrSorted)):
+        if classLabelsSorted[idx] == 1:
+            nFalseNegative += 1  # Increasing the threshold we change the assignment for this llr from 1 to 0, so we increase the error rate
+        if classLabelsSorted[idx] == 0:
+            nFalsePositive -= 1  # Increasing the threshold we change the assignment for this llr from 1 to 0, so we decrease the error rate
+        Pfn.append(nFalseNegative / nTrue)
+        Pfp.append(nFalsePositive / nFalse)
+
+    llrSorted = np.concatenate([-np.array([np.inf]), llrSorted])
+
+    PfnOut = []
+    PfpOut = []
+    thresholdsOut = []
+    for idx in range(len(llrSorted)):
+        if idx == len(llrSorted) - 1 or llrSorted[idx + 1] != llrSorted[idx]:
+            PfnOut.append(Pfn[idx])
+            PfpOut.append(Pfp[idx])
+            thresholdsOut.append(llrSorted[idx])
+
+    return np.array(PfnOut), np.array(PfpOut), np.array(thresholdsOut)
+
+
+def compute_minDCF_binary_fast(llr, classLabels, prior, Cfn, Cfp, returnThreshold=False):
+    Pfn, Pfp, th = compute_Pfn_Pfp_allThresholds_fast(llr, classLabels)
+    minDCF = (prior * Cfn * Pfn + (1 - prior) * Cfp * Pfp) / np.minimum(prior * Cfn, (1 - prior) * Cfp)
+    idx = np.argmin(minDCF)
+    if returnThreshold:
+        return minDCF[idx], th[idx]
+    else:
+        return minDCF[idx]
+
+def plot_dcf_over_prior(min_dcf_list, act_dcf_list, pi_values, filename):
+    plt.figure()
+    plt.plot(pi_values, min_dcf_list, label='minDCF', color='b')
+    plt.plot(pi_values, act_dcf_list, label='actDCF', color='r')
+    plt.xlabel('Prior Log Odds')
+    plt.ylabel('DCF')
+    plt.legend()
+    plt.savefig(filename)
+    plt.close()
 
 def evaluate_performance(D, L, scores, pi_values, name):
     min_dcf_list = []
     act_dcf_list = []
 
     for pi in pi_values:
-        pi_t = 1 / (1 + np.exp(-pi))
-        min_dcf = compute_min_dcf(scores, L, pi_t)
-        act_dcf = compute_dcf(scores, L, pi_t)
+        min_dcf, act_dcf = compute_minDCF_binary_fast(scores, L, pi, 1.0, 1.0), compute_actDCF_binary_fast(scores, L, pi, 1.0, 1.0)
         min_dcf_list.append(min_dcf)
         act_dcf_list.append(act_dcf)
 
     plot_dcf_over_prior(min_dcf_list, act_dcf_list, pi_values, f'{name}_dcf.png')
+    return min(min_dcf_list), min(act_dcf_list)
 
-    return min_dcf_list, act_dcf_list
+def evaluate_system(DTR, LTR, DTE, LTE, D_eval, L_eval, svm_model, lr_model, gmm_model):
+    output_dir = "Output/Evaluation"
+    os.makedirs(output_dir, exist_ok=True)
+
+    # Step 1: Compute minimum and actual DCF, and Bayes error plots for the delivered system
+    effPriorLogOdds = np.linspace(-4, 4, 21)
+
+    minDCF_svm_eval, actDCF_svm_eval, svm_scores_eval = single_fold_calibration(DTR, LTR, D_eval, L_eval, svm_model)
+    minDCF_lr_eval, actDCF_lr_eval, lr_scores_eval = single_fold_calibration(DTR, LTR, D_eval, L_eval, lr_model)
+    minDCF_gmm_eval, actDCF_gmm_eval, gmm_scores_eval = single_fold_calibration(DTR, LTR, D_eval, L_eval, gmm_model)
+
+    plot_bayes_error_with_calibration(svm_scores_eval, L_eval, effPriorLogOdds, output_file=os.path.join(output_dir, 'Bayes_Error_SVM_Eval.png'))
+    plot_bayes_error_with_calibration(lr_scores_eval, L_eval, effPriorLogOdds, output_file=os.path.join(output_dir, 'Bayes_Error_LR_Eval.png'))
+    plot_bayes_error_with_calibration(gmm_scores_eval, L_eval, effPriorLogOdds, output_file=os.path.join(output_dir, 'Bayes_Error_GMM_Eval.png'))
+
+    print("Evaluation Results for Individual Models:")
+    print(f'SVM Eval minDCF: {minDCF_svm_eval}, actDCF: {actDCF_svm_eval}')
+    print(f'LR Eval minDCF: {minDCF_lr_eval}, actDCF: {actDCF_lr_eval}')
+    print(f'GMM Eval minDCF: {minDCF_gmm_eval}, actDCF: {actDCF_gmm_eval}')
+
+    # Step 2: Consider the three best performing systems, and their fusion. Evaluate the corresponding actual DCF
+    minDCF_fusion_eval, actDCF_fusion_eval, fused_scores_eval = score_level_fusion(svm_scores_eval, lr_scores_eval, L_eval)
+    minDCF_fusion_eval, actDCF_fusion_eval, fused_scores_eval = score_level_fusion(fused_scores_eval, gmm_scores_eval, L_eval)
+
+    plot_bayes_error_with_calibration(fused_scores_eval, L_eval, effPriorLogOdds, output_file=os.path.join(output_dir, 'Bayes_Error_Fusion_Eval.png'))
+
+    print(f'Fusion Eval minDCF: {minDCF_fusion_eval}, actDCF: {actDCF_fusion_eval}')
+
+    # Step 3: Evaluate minimum and actual DCF for the target application, and analyze the corresponding Bayes error plots
+    plot_bayes_error_with_calibration(fused_scores_eval, L_eval, effPriorLogOdds, output_file=os.path.join(output_dir, 'Bayes_Error_Target_Application_Eval.png'))
+
+    # Step 4: Analyze whether your training strategy was effective for the selected approach (SVM in this case)
+    C_values = [0.001, 0.01, 0.1, 1, 10]
+    kernel_types = ['linear', 'poly', 'rbf']
+
+    best_min_dcf = minDCF_svm_eval
+    for C in C_values:
+        for kernel in kernel_types:
+            svm_model = SVMClassifier(kernel=kernel, C=C)
+            svm_model.train(DTR, LTR)
+            svm_scores_eval = svm_model.project(D_eval)
+            svm_min_dcf_eval, _ = evaluate_performance(D_eval, L_eval, svm_scores_eval, effPriorLogOdds, f'svm_eval_C{C}_kernel{kernel}')
+            print(f'SVM (C={C}, kernel={kernel}) Eval minDCF: {svm_min_dcf_eval}')
+            if svm_min_dcf_eval < best_min_dcf:
+                best_min_dcf = svm_min_dcf_eval
+                print(f'New best SVM model found with C={C} and kernel={kernel} with minDCF: {svm_min_dcf_eval}')
+
+    return
+
+def run_project_analysis(DTR, LTR, DTE, LTE):
+    output_dir = "Output/CalibrationFusion"
+    os.makedirs(output_dir, exist_ok=True)
+
+    # Define the models without pre-training
+    svm_model = SVMClassifier(kernel='poly', degree=4, C=0.00316)
+    lr_model = LogRegClass(None, None, 0.03162277660168379)
+    gmm_model = GMMClass(covariance_type='full')
+
+    # Generate consistent K-fold splits
+    splits = generate_kfold_splits(DTR, LTR, K=5)
+
+    # Calibration and evaluation using single-fold approach
+    minDCF_svm_single, actDCF_svm_single, calibrated_svm_scores_single = single_fold_calibration(DTR, LTR, DTE, LTE, svm_model)
+    print("SVM Done Single")
+    minDCF_lr_single, actDCF_lr_single, calibrated_lr_scores_single = single_fold_calibration(DTR, LTR, DTE, LTE, lr_model)
+    print("LR Done Single")
+    minDCF_gmm_single, actDCF_gmm_single, calibrated_gmm_scores_single = single_fold_calibration(DTR, LTR, DTE, LTE, gmm_model)
+    print("GMM Done Single")
+
+    print("Single done")
+
+    # Calibration and evaluation using K-fold approach
+    minDCF_svm_kfold, actDCF_svm_kfold, calibrated_svm_scores_kfold, all_labels_svm = kfold_calibration(DTR, LTR, svm_model, splits)
+    minDCF_lr_kfold, actDCF_lr_kfold, calibrated_lr_scores_kfold, all_labels_lr = kfold_calibration(DTR, LTR, lr_model, splits)
+    minDCF_gmm_kfold, actDCF_gmm_kfold, calibrated_gmm_scores_kfold, all_labels_gmm = kfold_calibration(DTR, LTR, gmm_model, splits)
+
+    print("Kfold done")
+
+    # Debug prints for label consistency
+    print(f"Labels SVM: {all_labels_svm[:10]} - Labels LR: {all_labels_lr[:10]} - Labels GMM: {all_labels_gmm[:10]}")
+    print(f"Labels SVM shape: {all_labels_svm.shape} - Labels LR shape: {all_labels_lr.shape} - Labels GMM shape: {all_labels_gmm.shape}")
+
+    # Ensure labels are consistent
+    assert np.array_equal(all_labels_svm, all_labels_lr) and np.array_equal(all_labels_lr, all_labels_gmm), "Mismatch in labels between models"
+    all_labels_kfold = all_labels_svm
+
+    # Plot the results
+    effPriorLogOdds = np.linspace(-4, 4, 21)
+    plot_bayes_error_with_calibration(calibrated_svm_scores_single, LTE, effPriorLogOdds, output_file=os.path.join(output_dir, 'Bayes_Error_SVM_Single.png'))
+    plot_bayes_error_with_calibration(calibrated_lr_scores_single, LTE, effPriorLogOdds, output_file=os.path.join(output_dir, 'Bayes_Error_LR_Single.png'))
+    plot_bayes_error_with_calibration(calibrated_gmm_scores_single, LTE, effPriorLogOdds, output_file=os.path.join(output_dir, 'Bayes_Error_GMM_Single.png'))
+    plot_bayes_error_with_calibration(calibrated_svm_scores_kfold, all_labels_kfold, effPriorLogOdds, output_file=os.path.join(output_dir, 'Bayes_Error_SVM_Kfold.png'))
+    plot_bayes_error_with_calibration(calibrated_lr_scores_kfold, all_labels_kfold, effPriorLogOdds, output_file=os.path.join(output_dir, 'Bayes_Error_LR_Kfold.png'))
+    plot_bayes_error_with_calibration(calibrated_gmm_scores_kfold, all_labels_kfold, effPriorLogOdds, output_file=os.path.join(output_dir, 'Bayes_Error_GMM_Kfold.png'))
+
+    # Score-level fusion
+    minDCF_fusion_single, actDCF_fusion_single, fused_scores_single = score_level_fusion(calibrated_svm_scores_single, calibrated_lr_scores_single, LTE)
+    minDCF_fusion_kfold, actDCF_fusion_kfold, fused_scores_kfold = score_level_fusion(calibrated_svm_scores_kfold, calibrated_lr_scores_kfold, all_labels_kfold)
+
+    print("Fusion done")
+
+    # Plot the fusion results
+    plot_bayes_error_with_calibration(fused_scores_single, LTE, effPriorLogOdds, output_file=os.path.join(output_dir, 'Bayes_Error_Fusion_Single.png'))
+    plot_bayes_error_with_calibration(fused_scores_kfold, all_labels_kfold, effPriorLogOdds, output_file=os.path.join(output_dir, 'Bayes_Error_Fusion_Kfold.png'))
+
+    # Print results
+    print(f'SVM Single-Fold minDCF: {minDCF_svm_single}, actDCF: {actDCF_svm_single}')
+    print(f'LR Single-Fold minDCF: {minDCF_lr_single}, actDCF: {actDCF_lr_single}')
+    print(f'GMM Single-Fold minDCF: {minDCF_gmm_single}, actDCF: {actDCF_gmm_single}')
+    print(f'SVM K-Fold minDCF: {minDCF_svm_kfold}, actDCF: {actDCF_svm_kfold}')
+    print(f'LR K-Fold minDCF: {minDCF_lr_kfold}, actDCF: {actDCF_lr_kfold}')
+    print(f'GMM K-Fold minDCF: {minDCF_gmm_kfold}, actDCF: {actDCF_gmm_kfold}')
+    print(f'Fusion Single-Fold minDCF: {minDCF_fusion_single}, actDCF: {actDCF_fusion_single}')
+    print(f'Fusion K-Fold minDCF: {minDCF_fusion_kfold}, actDCF: {actDCF_fusion_kfold}')
 
 
-def evaluate_model(DTR, LTR, DTE, LTE, pi_t=0.1):
-    classifier = LogRegClass(DTR, LTR, l=1.0)
-    classifier.train()
-    scores = classifier.predict(DTE)
-    min_dcf = classifier.compute_min_dcf(scores, LTE, pi_t)
-    act_dcf = classifier.compute_dcf(scores, LTE, pi_t)
-    return min_dcf, act_dcf
+    # Load evaluation data
+    D_eval, L_eval = load_data('Data/evalData.txt')
+
+    # Evaluate system
+    evaluate_system(DTR, LTR, DTE, LTE, D_eval, L_eval, svm_model, lr_model, gmm_model)
 
 
-def plot_dcf_over_prior(scores, labels, pi_values, output_file):
-    dcf = []
-    mindcf = []
-    for pi in pi_values:
-        pi1 = 1 / (1 + np.exp(-pi))
-        decisions = compute_optimal_bayes_decisions(llrs=scores, pi1=pi1, Cfn=1, Cfp=1)
-        confusion_matrix = compute_confusion_matrix(decisions, labels)
-        bayes_risk = compute_bayes_risk(confusion_matrix, pi1, 1, 1)
-        normalized_dcf = compute_normalized_dcf(bayes_risk, pi1, 1, 1)
-        dcf.append(normalized_dcf)
-        min_normalized_dcf = compute_normalized_dcf(bayes_risk, pi1, 1, 1)
-        mindcf.append(min_normalized_dcf)
-    plt.plot(pi_values, dcf, label='DCF')
-    plt.plot(pi_values, mindcf, label='min DCF')
-    plt.xlabel('Prior Log-Odds')
-    plt.ylabel('DCF value')
-    plt.legend()
-    plt.grid()
-    plt.title('DCF over Prior Log-Odds')
-    plt.savefig(output_file)
-    plt.close()
+# def single_fold_calibration(D, L, eval_data, eval_labels, system_1_scores, system_2_scores):
+#     # Split data
+#     n_train = int(0.7 * D.shape[1])
+#     D_train, L_train = D[:, :n_train], L[:n_train]
+#     D_valid, L_valid = D[:, n_train:], L[n_train:]
+#
+#     # Calibrate System 1
+#     system_1_calibrated = calibrate_scores(system_1_scores[:n_train], L_train)
+#
+#     # Calibrate System 2
+#     system_2_calibrated = calibrate_scores(system_2_scores[:n_train], L_train)
+#
+#     # Compute DCF for validation
+#     system_1_dcf = compute_dcf(system_1_calibrated, L_valid, 0.5)
+#     system_2_dcf = compute_dcf(system_2_calibrated, L_valid, 0.5)
+#     fusion_scores = 0.5 * (system_1_calibrated + system_2_calibrated)
+#     fusion_dcf = compute_dcf(fusion_scores, L_valid, 0.5)
+#
+#     # Compute DCF for evaluation
+#     system_1_eval_dcf = compute_dcf(system_1_scores[n_train:], eval_labels, 0.5)
+#     system_2_eval_dcf = compute_dcf(system_2_scores[n_train:], eval_labels, 0.5)
+#     fusion_eval_scores = 0.5 * (system_1_scores[n_train:] + system_2_scores[n_train:])
+#     fusion_eval_dcf = compute_dcf(fusion_eval_scores, eval_labels, 0.5)
+#
+#     return system_1_dcf, system_2_dcf, fusion_dcf, system_1_eval_dcf, system_2_eval_dcf, fusion_eval_dcf
 
 
-# def plot_roc_curve(fpr, tpr, roc_auc, model_name, output_file):
-#     plt.figure()
-#     lw = 2
-#     plt.plot(fpr, tpr, color='darkorange', lw=lw, label=f'ROC curve (area = {roc_auc:0.2f})')
-#     plt.plot([0, 1], [0, 1], color='navy', lw=lw, linestyle='--')
-#     plt.xlim([0.0, 1.0])
-#     plt.ylim([0.0, 1.05])
-#     plt.xlabel('False Positive Rate')
-#     plt.ylabel('True Positive Rate')
-#     plt.title(f'Receiver Operating Characteristic - {model_name}')
-#     plt.legend(loc="lower right")
-#     plt.savefig(output_file)
-#     plt.close()
+# def k_fold_calibration(D, L, eval_data, eval_labels, system_1_scores, system_2_scores, k=5):
+#     fold_size = D.shape[1] // k
+#     system_1_dcfs = []
+#     system_2_dcfs = []
+#     fusion_dcfs = []
+#
+#     for i in range(k):
+#         val_start = i * fold_size
+#         val_end = (i + 1) * fold_size
+#         D_train = np.hstack([D[:, :val_start], D[:, val_end:]])
+#         L_train = np.hstack([L[:val_start], L[val_end:]])
+#         D_val = D[:, val_start:val_end]
+#         L_val = L[val_start:val_end]
+#
+#         # Calibrate System 1
+#         system_1_calibrated = calibrate_scores(system_1_scores[val_start:val_end], L_train)
+#
+#         # Calibrate System 2
+#         system_2_calibrated = calibrate_scores(system_2_scores[val_start:val_end], L_train)
+#
+#         # Compute DCF
+#         system_1_dcf = compute_dcf(system_1_calibrated, L_val, 0.5)
+#         system_2_dcf = compute_dcf(system_2_calibrated, L_val, 0.5)
+#         fusion_scores = 0.5 * (system_1_calibrated + system_2_calibrated)
+#         fusion_dcf = compute_dcf(fusion_scores, L_val, 0.5)
+#
+#         system_1_dcfs.append(system_1_dcf)
+#         system_2_dcfs.append(system_2_dcf)
+#         fusion_dcfs.append(fusion_dcf)
+#
+#     # Compute average DCF for each system and fusion
+#     avg_system_1_dcf = np.mean(system_1_dcfs)
+#     avg_system_2_dcf = np.mean(system_2_dcfs)
+#     avg_fusion_dcf = np.mean(fusion_dcfs)
+#
+#     # Compute DCF for evaluation
+#     system_1_eval_dcf = compute_dcf(system_1_scores, eval_labels, 0.5)
+#     system_2_eval_dcf = compute_dcf(system_2_scores, eval_labels, 0.5)
+#     fusion_eval_scores = 0.5 * (system_1_scores + system_2_scores)
+#     fusion_eval_dcf = compute_dcf(fusion_eval_scores, eval_labels, 0.5)
+#
+#     return avg_system_1_dcf, avg_system_2_dcf, avg_fusion_dcf, system_1_eval_dcf, system_2_eval_dcf, fusion_eval_dcf
+
 
 
 def normalize_data(D):
@@ -299,307 +641,27 @@ def main(type, mode):
     (DTR, LTR), (DTE, LTE) = split_db_2to1(DTR, LTR)
     ciao = False
     print("ciao")
-    #if ciao:
+
+    # if ciao:
     ############################ DATA ANALYSIS - LAB 2 ############################
 
     data_analysis(DTR, LTR)
 
     ############################ PCA & LDA - LAB 3  ############################
 
-    #PCA_LDA_analysis(DTE, DTR, LTR, LTE)
+    PCA_LDA_analysis(DTE, DTR, LTR, LTE)
 
     ############################ UNIVARIATE GAUSSIAN MODELS - LAB 4 ############################
 
-    #Univariate_model(DTE, DTR, LTE, LTR)
+    Univariate_model(DTE, DTR, LTE, LTR)
 
     ############################ MULTIVARIATE GAUSSIAN MODELS - LAB 5 ############################
 
-    #train_MVG_1(DTE, DTR, LTE, LTR)
-
-    ############################ MULTIVARIATE GAUSSIAN MODELS - PLOTS FOR LAB 7 ############################
-
-    #train_MVG(DTE, DTR, LTE, LTR)
-
-    ############################ LOGISTIC REGRESSION - LAB 8 ############################
-
-    #train_LR(DTE, DTR, LTE, LTR)
-
-    ############################ SVM - LAB 9 ############################
-
-    train_SVM(DTE, DTR, LTE, LTR)
-
-    ############################ GMM - LAB 10 ############################
-
-    train_GMM(DTE, DTR, LTE, LTR)
-
-    ############################ CALIBRATION - LAB 11 ###########################
-
-    D_train, L_train = DTR, LTR
-    D_valid, L_valid = DTE, LTE
-    D_eval, L_eval = load_data('Data/evalData.txt')
-
-    # Train classifiers
-    gmm_model = GMMClass()
-    lr_model = LogRegClass(D_train, L_train, l=1.0)
-    svm_model = SVMClassifier(kernel='linear')
-
-    # Train GMM
-    gmm_model.LBG(D_train, max_components=8)
-    gmm_model.EM(D_train)
-
-    # Train Logistic Regression
-    lr_model.train()
-
-    # Train SVM
-    svm_model.train(D_train, L_train)
-
-    # Get scores for validation data
-    gmm_scores_valid = gmm_model.logpdf_GMM(D_valid)
-    lr_scores_valid = lr_model.predict(D_valid)
-    svm_scores_valid = svm_model.project(D_valid)
-
-    # Calibrate scores
-    gmm_calibrated_scores = calibrate_scores(gmm_scores_valid, L_valid)
-    lr_calibrated_scores = calibrate_scores(lr_scores_valid, L_valid)
-    svm_calibrated_scores = calibrate_scores(svm_scores_valid, L_valid)
-
-    # Fuse scores
-    fused_scores_valid = fuse_scores([gmm_calibrated_scores, lr_calibrated_scores, svm_calibrated_scores])
-
-    # Evaluate on validation data
-    pi_values = np.linspace(-3, 3, 21)
-    gmm_min_dcf, gmm_act_dcf = evaluate_performance(D_valid, L_valid, gmm_calibrated_scores, pi_values, "gmm_valid")
-    lr_min_dcf, lr_act_dcf = evaluate_performance(D_valid, L_valid, lr_calibrated_scores, pi_values, "lr_valid")
-    svm_min_dcf, svm_act_dcf = evaluate_performance(D_valid, L_valid, svm_calibrated_scores, pi_values, "svm_valid")
-    fusion_min_dcf, fusion_act_dcf = evaluate_performance(D_valid, L_valid, fused_scores_valid, pi_values,
-                                                          "fusion_valid")
-
-    # Print results for validation data
-    print("Validation Results:")
-    print(f"GMM: minDCF={gmm_min_dcf}, actDCF={gmm_act_dcf}")
-    print(f"LR: minDCF={lr_min_dcf}, actDCF={lr_act_dcf}")
-    print(f"SVM: minDCF={svm_min_dcf}, actDCF={svm_act_dcf}")
-    print(f"Fusion: minDCF={fusion_min_dcf}, actDCF={fusion_act_dcf}")
-
-    # Get scores for evaluation data
-    gmm_scores_eval = gmm_model.logpdf_GMM(D_eval)
-    lr_scores_eval = lr_model.predict(D_eval)
-    svm_scores_eval = svm_model.project(D_eval)
-
-    # Calibrate scores using evaluation labels
-    gmm_calibrated_scores_eval = calibrate_scores(gmm_scores_eval, L_eval)
-    lr_calibrated_scores_eval = calibrate_scores(lr_scores_eval, L_eval)
-    svm_calibrated_scores_eval = calibrate_scores(svm_scores_eval, L_eval)
-
-    # Fuse scores
-    fused_scores_eval = fuse_scores([gmm_calibrated_scores_eval, lr_calibrated_scores_eval, svm_calibrated_scores_eval])
-
-    # Evaluate on evaluation data
-    gmm_min_dcf_eval, gmm_act_dcf_eval = evaluate_performance(D_eval, L_eval, gmm_calibrated_scores_eval, pi_values,
-                                                              "gmm_eval")
-    lr_min_dcf_eval, lr_act_dcf_eval = evaluate_performance(D_eval, L_eval, lr_calibrated_scores_eval, pi_values,
-                                                            "lr_eval")
-    svm_min_dcf_eval, svm_act_dcf_eval = evaluate_performance(D_eval, L_eval, svm_calibrated_scores_eval, pi_values,
-                                                              "svm_eval")
-    fusion_min_dcf_eval, fusion_act_dcf_eval = evaluate_performance(D_eval, L_eval, fused_scores_eval, pi_values,
-                                                                    "fusion_eval")
-
-    # Print results for evaluation data
-    print("Evaluation Results:")
-    print(f"GMM: minDCF={gmm_min_dcf_eval}, actDCF={gmm_act_dcf_eval}")
-    print(f"LR: minDCF={lr_min_dcf_eval}, actDCF={lr_act_dcf_eval}")
-    print(f"SVM: minDCF={svm_min_dcf_eval}, actDCF={svm_act_dcf_eval}")
-    print(f"Fusion: minDCF={fusion_min_dcf_eval}, actDCF={fusion_act_dcf_eval}")
-
-    # FINE TEST COMPATTEZZA
-    return
-
-    ############################ DATA ANALYSIS ############################
-
-    data_analysis(DTR, LTR)
-
-    ############################ PCA & LDA  ############################
-
-    PCA_LDA_analysis(DTE, DTR, LTR, LTE)
-
-    ############################ UNIVARIATE GAUSSIAN MODELS ############################
-
-    Univariate_model(DTE, DTR, LTE, LTR)
-
-    ############################ MULTIVARIATE GAUSSIAN MODELS ############################
-
     train_MVG_1(DTE, DTR, LTE, LTR)
 
-    # # MVG
-    # mvg_classifier = GaussianClassifier(model_type='MVG')
-    # mvg_classifier.train(DTR, LTR)
-    # logS = mvg_classifier.predict(DTE)
-    # predictions = mvg_classifier.compute_predictions(logS)
-    # error_rate = mvg_classifier.compute_error_rate(predictions, LTE)
-    # print(f"MVG Error Rate: {error_rate}")
-    #
-    # # Naive Bayes
-    # nb_classifier = GaussianClassifier(model_type='NaiveBayes')
-    # nb_classifier.train(DTR, LTR)
-    # logS_nb = nb_classifier.predict(DTE)
-    # predictions_nb = nb_classifier.compute_predictions(logS_nb)
-    # error_rate_nb = nb_classifier.compute_error_rate(predictions_nb, LTE)
-    # print(f"Naive Bayes Error Rate: {error_rate_nb}")
-    #
-    # # Tied Covariance
-    # tied_classifier = GaussianClassifier(model_type='TiedCovariance')
-    # tied_classifier.train(DTR, LTR)
-    # logS_tied = tied_classifier.predict(DTE)
-    # predictions_tied = tied_classifier.compute_predictions(logS_tied)
-    # error_rate_tied = tied_classifier.compute_error_rate(predictions_tied, LTE)
-    # print(f"Tied Covariance Error Rate: {error_rate_tied}")
-    #
-    # # Project-specific implementation
-    # output_dir = 'Output/UnivariateGaussians'
-    # mvg_classifier.fit_univariate_gaussian_models(DTR, LTR, output_dir)
-    #
-    # classes = np.unique(LTR)
-    # for cls in classes:
-    #     for i in range(DTR.shape[0]):
-    #         feature_data = DTR[i, LTR == cls]
-    #         mu_ML = feature_data.mean()
-    #         C_ML = feature_data.var()
-    #         ll = mvg_classifier.plot_loglikelihood(feature_data, np.array([[mu_ML]]), np.array([[C_ML]]),
-    #                                                os.path.join(output_dir,
-    #                                                             f'LogLikelihood_Class_{cls}_Feature_{i + 1}.png'))
-    #         print(f"Class {cls}, Feature {i + 1} Log-Likelihood: {ll}")
-    #
-    # # Compute covariance and correlation matrices for MVG model
-    # mvg_classifier.analyze_covariances(DTR, LTR)
-    #
-    # # Repeat the analysis using only features 1 to 4 (discarding the last 2 features)
-    # DTR_reduced = DTR[:4, :]
-    # DTE_reduced = DTE[:4, :]
-    #
-    # # MVG with reduced features
-    # mvg_classifier_reduced = GaussianClassifier(model_type='MVG')
-    # mvg_classifier_reduced.train(DTR_reduced, LTR)
-    # logS_reduced = mvg_classifier_reduced.predict(DTE_reduced)
-    # predictions_reduced = mvg_classifier_reduced.compute_predictions(logS_reduced)
-    # error_rate_reduced = mvg_classifier_reduced.compute_error_rate(predictions_reduced, LTE)
-    # print(f"MVG Error Rate with reduced features: {error_rate_reduced}")
-    #
-    # # Tied Covariance with reduced features
-    # tied_classifier_reduced = GaussianClassifier(model_type='TiedCovariance')
-    # tied_classifier_reduced.train(DTR_reduced, LTR)
-    # logS_tied_reduced = tied_classifier_reduced.predict(DTE_reduced)
-    # predictions_tied_reduced = tied_classifier_reduced.compute_predictions(logS_tied_reduced)
-    # error_rate_tied_reduced = tied_classifier_reduced.compute_error_rate(predictions_tied_reduced, LTE)
-    # print(f"Tied Covariance Error Rate with reduced features: {error_rate_tied_reduced}")
-    #
-    # # Naive Bayes with reduced features
-    # nb_classifier_reduced = GaussianClassifier(model_type='NaiveBayes')
-    # nb_classifier_reduced.train(DTR_reduced, LTR)
-    # logS_nb_reduced = nb_classifier_reduced.predict(DTE_reduced)
-    # predictions_nb_reduced = nb_classifier_reduced.compute_predictions(logS_nb_reduced)
-    # error_rate_nb_reduced = nb_classifier_reduced.compute_error_rate(predictions_nb_reduced, LTE)
-    # print(f"Naive Bayes Error Rate with reduced features: {error_rate_nb_reduced}")
-    #
-    # # Use PCA to reduce the dimensionality and apply the three classification approaches
-    # pca_dim = 2  # For example, reduce to 2 principal components
-    # P_pca = estimate_pca(DTR, pca_dim)
-    # DTR_pca = apply_pca(DTR, P_pca)
-    # DTE_pca = apply_pca(DTE, P_pca)
-    #
-    # # MVG with PCA
-    # mvg_classifier_pca = GaussianClassifier(model_type='MVG')
-    # mvg_classifier_pca.train(DTR_pca, LTR)
-    # logS_pca = mvg_classifier_pca.predict(DTE_pca)
-    # predictions_pca = mvg_classifier_pca.compute_predictions(logS_pca)
-    # error_rate_pca = mvg_classifier_pca.compute_error_rate(predictions_pca, LTE)
-    # print(f"MVG Error Rate with PCA: {error_rate_pca}")
-    #
-    # # Tied Covariance with PCA
-    # tied_classifier_pca = GaussianClassifier(model_type='TiedCovariance')
-    # tied_classifier_pca.train(DTR_pca, LTR)
-    # logS_tied_pca = tied_classifier_pca.predict(DTE_pca)
-    # predictions_tied_pca = tied_classifier_pca.compute_predictions(logS_tied_pca)
-    # error_rate_tied_pca = tied_classifier_pca.compute_error_rate(predictions_tied_pca, LTE)
-    # print(f"Tied Covariance Error Rate with PCA: {error_rate_tied_pca}")
-    #
-    # # Naive Bayes with PCA
-    # nb_classifier_pca = GaussianClassifier(model_type='NaiveBayes')
-    # nb_classifier_pca.train(DTR_pca, LTR)
-    # logS_nb_pca = nb_classifier_pca.predict(DTE_pca)
-    # predictions_nb_pca = nb_classifier_pca.compute_predictions(logS_nb_pca)
-    # error_rate_nb_pca = nb_classifier_pca.compute_error_rate(predictions_nb_pca, LTE)
-    # print(f"Naive Bayes Error Rate with PCA: {error_rate_nb_pca}")
-
     ############################ MULTIVARIATE GAUSSIAN MODELS - PLOTS FOR LAB 7 ############################
 
-    # # MVG
-    # mvg_classifier = GaussianClassifier(model_type='MVG')
-    # mvg_classifier.train(DTR, LTR)
-    # logS = mvg_classifier.predict(DTE)
-    # predictions = mvg_classifier.compute_predictions(logS)
-    # error_rate = mvg_classifier.compute_error_rate(predictions, LTE)
-    # print(f"MVG Error Rate: {error_rate}")
-    #
-    # # Naive Bayes
-    # nb_classifier = GaussianClassifier(model_type='NaiveBayes')
-    # nb_classifier.train(DTR, LTR)
-    # logS_nb = nb_classifier.predict(DTE)
-    # predictions_nb = nb_classifier.compute_predictions(logS_nb)
-    # error_rate_nb = nb_classifier.compute_error_rate(predictions_nb, LTE)
-    # print(f"Naive Bayes Error Rate: {error_rate_nb}")
-    #
-    # # Tied Covariance
-    # tied_classifier = GaussianClassifier(model_type='TiedCovariance')
-    # tied_classifier.train(DTR, LTR)
-    # logS_tied = tied_classifier.predict(DTE)
-    # predictions_tied = tied_classifier.compute_predictions(logS_tied)
-    # error_rate_tied = tied_classifier.compute_error_rate(predictions_tied, LTE)
-    # print(f"Tied Covariance Error Rate: {error_rate_tied}")
-    #
-    # # Project-specific implementation
-    # output_dir = 'Output/UnivariateGaussians'
-    # mvg_classifier.fit_univariate_gaussian_models(DTR, LTR, output_dir)
-    #
-    # classes = np.unique(LTR)
-    # for cls in classes:
-    #     for i in range(DTR.shape[0]):
-    #         feature_data = DTR[i, LTR == cls]
-    #         mu_ML = feature_data.mean()
-    #         C_ML = feature_data.var()
-    #         ll = mvg_classifier.plot_loglikelihood(feature_data, np.array([[mu_ML]]), np.array([[C_ML]]),
-    #                                                os.path.join(output_dir,
-    #                                                             f'LogLikelihood_Class_{cls}_Feature_{i + 1}.png'))
-    #         print(f"Class {cls}, Feature {i + 1} Log-Likelihood: {ll}")
-    #
-    # # Compute ROC curve and Bayes error plots
-    # llrs = mvg_classifier.compute_llrs(logS)
-    # mvg_classifier.plot_roc_curve(llrs, LTE, output_file='mvg_roc_curve.png')
-    # effPriorLogOdds = np.linspace(-3, 3, 21)
-    # mvg_classifier.plot_bayes_error(llrs, LTE, effPriorLogOdds, output_file='mvg_bayes_error_plot.png')
-    #
-    # # Repeat for Naive Bayes
-    # llrs_nb = nb_classifier.compute_llrs(logS_nb)
-    # nb_classifier.plot_roc_curve(llrs_nb, LTE, output_file='nb_roc_curve.png')
-    # nb_classifier.plot_bayes_error(llrs_nb, LTE, effPriorLogOdds, output_file='nb_bayes_error_plot.png')
-    #
-    # # Repeat for Tied Covariance
-    # llrs_tied = tied_classifier.compute_llrs(logS_tied)
-    # tied_classifier.plot_roc_curve(llrs_tied, LTE, output_file='tied_roc_curve.png')
-    # tied_classifier.plot_bayes_error(llrs_tied, LTE, effPriorLogOdds, output_file='tied_bayes_error_plot.png')
-    #
-    # # Analyze and compare DCFs
-    # for pi1, Cfn, Cfp in [(0.5, 1.0, 1.0), (0.9, 1.0, 1.0), (0.1, 1.0, 1.0), (0.5, 1.0, 9.0), (0.5, 9.0, 1.0)]:
-    #     print(f"Analyzing for pi1={pi1}, Cfn={Cfn}, Cfp={Cfp}")
-    #     for classifier, name in [(mvg_classifier, 'MVG'), (nb_classifier, 'Naive Bayes'), (tied_classifier, 'Tied Covariance')]:
-    #         decisions = classifier.compute_optimal_bayes_decisions(llrs, pi1, Cfn, Cfp)
-    #         confusion_matrix = classifier.compute_confusion_matrix(decisions, LTE)
-    #         bayes_risk = classifier.compute_bayes_risk(confusion_matrix, pi1, Cfn, Cfp)
-    #         normalized_dcf = classifier.compute_normalized_dcf(bayes_risk, pi1, Cfn, Cfp)
-    #         print(f"{name} Normalized DCF: {normalized_dcf}")
-
-    train_MVG(DTE, DTR, LTE, LTR, output_dir)
-
-    # Fine for
+    train_MVG(DTE, DTR, LTE, LTR)
 
     ############################ LOGISTIC REGRESSION - LAB 8 ############################
 
@@ -607,594 +669,157 @@ def main(type, mode):
 
     ############################ SVM - LAB 9 ############################
 
-    # lambdas = np.logspace(-4, 2, 13)
-    # pi_t = 0.1
-    #
-    # svm_classifier = SVMClassifier(kernel='linear', C=1.0)
-    # svm_classifier.evaluate_model(DTR, LTR, DTE, LTE, lambdas, pi_t, 'Output/SVM_Linear')
-    #
-    # svm_classifier = SVMClassifier(kernel='poly', degree=2, coef0=1.0, C=1.0)
-    # svm_classifier.evaluate_model(DTR, LTR, DTE, LTE, lambdas, pi_t, 'Output/SVM_Poly')
-    #
-    # gammas = np.exp(np.array([-4, -3, -2, -1]))
-    # for gamma in gammas:
-    #     svm_classifier = SVMClassifier(kernel='rbf', gamma=gamma, C=1.0)
-    #     svm_classifier.evaluate_model(DTR, LTR, DTE, LTE, lambdas, pi_t, f'Output/SVM_RBF_Gamma_{gamma}')
-    # print("SVM 1")
-    #
-    # lambdas = np.logspace(-4, 2, 13)
-    # pi_t = 0.1  # Example target prior
-    # output_dir = 'Output/SVM_Results'
-    #
-    # # Initialize SVM classifier
-    # svm_classifier = SVMClassifier(kernel='linear')
-    #
-    # # Evaluate the model with different values of lambda
-    # svm_classifier.evaluate_model(DTR, LTR, DTE, LTE, lambdas, pi_t, output_dir)
-
-    # PROJECT
-
     train_SVM(DTE, DTR, LTE, LTR)
 
     ############################ GMM - LAB 10 ############################
 
     train_GMM(DTE, DTR, LTE, LTR)
 
-    '''OLD STUFF 
+    def compare_best_models(DTR, LTR, DTE, LTE):
+        pi_t = 0.1
+        effPriorLogOdds = np.linspace(-4, 4, 21)
+
+        output_dir = "Output/Comparison"
+        os.makedirs(output_dir, exist_ok=True)
+
+        # Train and get scores for Logistic Regression
+        lr_model_name = 'Quadratic Logistic Regression'
+        lr_lambda = 0.03162277660168379
+        DTR_exp = expand_features(DTR)
+        DTE_exp = expand_features(DTE)
+        logreg_classifier = LogRegClass(DTR_exp, LTR, lr_lambda, prior_weighted=False)
+        logreg_classifier.train()
+        lr_scores = logreg_classifier.predict(DTE_exp)
+        plot_bayes_error(lr_scores, LTE, effPriorLogOdds,
+                         output_file=os.path.join(output_dir, 'Bayes_Error_Logistic_Regression.png'))
+
+        # Train and get scores for SVM
+        svm_model_name = 'Polynomial SVM'
+        svm_degree = 4
+        svm_C = 0.00316
+        svm_classifier = SVMClassifier(kernel='poly', degree=svm_degree, C=svm_C)
+        svm_classifier.train(DTR, LTR)
+        svm_scores = svm_classifier.project(DTE)
+        plot_bayes_error(svm_scores, LTE, effPriorLogOdds, output_file=os.path.join(output_dir, 'Bayes_Error_SVM.png'))
+
+        # Train and get scores for GMM
+        gmm_model_name = 'GMM'
+        gmm_num_components = 8
+        gmm_classifier = GMMClass(covariance_type='full')
+        gmm_classifier.train_GMM_LBG_EM(DTR, numComponents=gmm_num_components, psiEig=0.01, alpha=0.1,
+                                        epsLLAverage=1e-6, verbose=True)
+        gmm_scores = gmm_classifier.logpdf_GMM(DTE)
+        plot_bayes_error(gmm_scores, LTE, effPriorLogOdds, output_file=os.path.join(output_dir, 'Bayes_Error_GMM.png'))
+
+        # Plot ROC and Bayes error plots for all models
+        models_scores = {
+            lr_model_name: lr_scores,
+            svm_model_name: svm_scores,
+            gmm_model_name: gmm_scores,
+        }
+
+        for model_name, scores in models_scores.items():
+            fpr, tpr, _ = roc_curve(LTE, scores)
+            roc_auc = auc(fpr, tpr)
+            plot_roc_curve(fpr, tpr, roc_auc, model_name, output_file=os.path.join(output_dir, f'ROC_{model_name}.png'))
+
+    compare_best_models(DTR, LTR, DTE, LTE)
+
+    #print("finished comparing")
+
+    '''
+    BEST 3 MODELS:
+    1 SVM:
+        Model: Polynomial SVM
+        Configuration: Degree d = 4, C = 0.00316
+        Performance: minDCF of 0.167, actualDCF of 0.310
+	2 Logistic Regression:
+        Model: Quadratic Logistic Regression
+        Configuration: Lambda of 0.03162277660168379
+        Performance: minDCF of 0.024363159242191502, actualDCF of 0.024363159242191502
+	3 GMM:
+        Model: GMM
+        Configuration: Full covariance with 8 components
+        Performance: minDCF of 0.9979038658474142, actualDCF of 1.0
+    '''
+
+    ############################ CALIBRATION - LAB 11 ###########################
+
+    run_project_analysis(DTR, LTR, DTE, LTE)
+
+    #eval(DTE, DTR, LTE, LTR)
+
+    return
+
+
+# def eval(DTE, DTR, LTE, LTR):
+#     D_train, L_train = DTR, LTR
+#     D_valid, L_valid = DTE, LTE
+#     D_eval, L_eval = load_data('Data/evalData.txt')
+#     # Train classifiers
+#     gmm_model = GMMClass()
+#     lr_model = LogRegClass(D_train, L_train, l=1.0)
+#     svm_model = SVMClassifier(kernel='linear')
+#     # Train GMM TODO: adapt to the changes in the GMM of this morning
+#     # gmm_model.LBG(D_train, max_components=8)
+#     # gmm_model.EM(D_train)
+#     # Train Logistic Regression
+#     lr_model.train()
+#     # Train SVM
+#     svm_model.train(D_train, L_train)
+#     # Get scores for validation data
+#     gmm_scores_valid = gmm_model.logpdf_GMM(D_valid)
+#     lr_scores_valid = lr_model.predict(D_valid)
+#     svm_scores_valid = svm_model.project(D_valid)
+#     # Calibrate scores
+#     gmm_calibrated_scores = calibrate_scores(gmm_scores_valid, L_valid)
+#     lr_calibrated_scores = calibrate_scores(lr_scores_valid, L_valid)
+#     svm_calibrated_scores = calibrate_scores(svm_scores_valid, L_valid)
+#     # Fuse scores
+#     fused_scores_valid = fuse_scores([gmm_calibrated_scores, lr_calibrated_scores, svm_calibrated_scores])
+#     # Evaluate on validation data
+#     pi_values = np.linspace(-3, 3, 21)
+#     gmm_min_dcf, gmm_act_dcf = evaluate_performance(D_valid, L_valid, gmm_calibrated_scores, pi_values, "gmm_valid")
+#     lr_min_dcf, lr_act_dcf = evaluate_performance(D_valid, L_valid, lr_calibrated_scores, pi_values, "lr_valid")
+#     svm_min_dcf, svm_act_dcf = evaluate_performance(D_valid, L_valid, svm_calibrated_scores, pi_values, "svm_valid")
+#     fusion_min_dcf, fusion_act_dcf = evaluate_performance(D_valid, L_valid, fused_scores_valid, pi_values,
+#                                                           "fusion_valid")
+#     # Print results for validation data
+#     print("Validation Results:")
+#     print(f"GMM: minDCF={gmm_min_dcf}, actDCF={gmm_act_dcf}")
+#     print(f"LR: minDCF={lr_min_dcf}, actDCF={lr_act_dcf}")
+#     print(f"SVM: minDCF={svm_min_dcf}, actDCF={svm_act_dcf}")
+#     print(f"Fusion: minDCF={fusion_min_dcf}, actDCF={fusion_act_dcf}")
+#     # Get scores for evaluation data
+#     gmm_scores_eval = gmm_model.logpdf_GMM(D_eval)
+#     lr_scores_eval = lr_model.predict(D_eval)
+#     svm_scores_eval = svm_model.project(D_eval)
+#     # Calibrate scores using evaluation labels
+#     gmm_calibrated_scores_eval = calibrate_scores(gmm_scores_eval, L_eval)
+#     lr_calibrated_scores_eval = calibrate_scores(lr_scores_eval, L_eval)
+#     svm_calibrated_scores_eval = calibrate_scores(svm_scores_eval, L_eval)
+#     # Fuse scores
+#     fused_scores_eval = fuse_scores([gmm_calibrated_scores_eval, lr_calibrated_scores_eval, svm_calibrated_scores_eval])
+#     # Evaluate on evaluation data
+#     gmm_min_dcf_eval, gmm_act_dcf_eval = evaluate_performance(D_eval, L_eval, gmm_calibrated_scores_eval, pi_values,
+#                                                               "gmm_eval")
+#     lr_min_dcf_eval, lr_act_dcf_eval = evaluate_performance(D_eval, L_eval, lr_calibrated_scores_eval, pi_values,
+#                                                             "lr_eval")
+#     svm_min_dcf_eval, svm_act_dcf_eval = evaluate_performance(D_eval, L_eval, svm_calibrated_scores_eval, pi_values,
+#                                                               "svm_eval")
+#     fusion_min_dcf_eval, fusion_act_dcf_eval = evaluate_performance(D_eval, L_eval, fused_scores_eval, pi_values,
+#                                                                     "fusion_eval")
+#     # Print results for evaluation data
+#     print("Evaluation Results:")
+#     print(f"GMM: minDCF={gmm_min_dcf_eval}, actDCF={gmm_act_dcf_eval}")
+#     print(f"LR: minDCF={lr_min_dcf_eval}, actDCF={lr_act_dcf_eval}")
+#     print(f"SVM: minDCF={svm_min_dcf_eval}, actDCF={svm_act_dcf_eval}")
+#     print(f"Fusion: minDCF={fusion_min_dcf_eval}, actDCF={fusion_act_dcf_eval}")
 
-    # # Fit uni-variate Gaussian models and plot results
-    # fit_univariate_gaussian_models(DTR, LTR)
-    #
-    # # Plot log-likelihood for each feature and class
-    # output_dir = 'Output/UnivariateGaussians'
-    # classes = np.unique(LTR)
-    # for cls in classes:
-    #     for i in range(DTR.shape[0]):
-    #         feature_data = DTR[i, LTR == cls]
-    #         mu_ML = feature_data.mean()
-    #         C_ML = feature_data.var()
-    #         ll = plot_loglikelihood(feature_data, np.array([[mu_ML]]), np.array([[C_ML]]),
-    #                                 os.path.join(output_dir, f'LogLikelihood_Class_{cls}_Feature_{i + 1}.png'))
-    #         print(f"Class {cls}, Feature {i + 1} Log-Likelihood: {ll}")
-
-    ############################ OTHER MODELS ############################
-
-    # MVG, Tied, Naive Bayes Evaluation
-    evaluate_classifiers(DTR, LTR, DTE, LTE)
-
-    # Analyze Covariances
-    analyze_covariances(DTR, LTR)
-
-    # MVG Classifier
-    logS_mvg = mvg_classifier(DTR, LTR, DTE)
-    predictions_mvg = compute_predictions(logS_mvg)
-    error_mvg = compute_error_rate(predictions_mvg, LTE)
-    print(f"MVG Error Rate: {error_mvg}")
-
-    # Tied Covariance Classifier
-    logS_tied = tied_covariance_classifier(DTR, LTR, DTE)
-    predictions_tied = compute_predictions(logS_tied)
-    error_tied = compute_error_rate(predictions_tied, LTE)
-    print(f"Tied Covariance Error Rate: {error_tied}")
-
-    # Naive Bayes Classifier
-    logS_nb = naive_bayes_classifier(DTR, LTR, DTE)
-    predictions_nb = compute_predictions(logS_nb)
-    error_nb = compute_error_rate(predictions_nb, LTE)
-    print(f"Naive Bayes Error Rate: {error_nb}")
-
-    # Analyze Covariances
-    analyze_covariances(DTR, LTR)
-
-    # Compute and plot confusion matrices
-    confusion_matrix_mvg = compute_confusion_matrix(predictions_mvg, LTE)
-    confusion_matrix_tied = compute_confusion_matrix(predictions_tied, LTE)
-    confusion_matrix_nb = compute_confusion_matrix(predictions_nb, LTE)
-    print(f"MVG Confusion Matrix:\n{confusion_matrix_mvg}")
-    print(f"Tied Covariance Confusion Matrix:\n{confusion_matrix_tied}")
-    print(f"Naive Bayes Confusion Matrix:\n{confusion_matrix_nb}")
-
-    # Evaluate classifiers with different priors and costs
-    priors_costs = [(0.5, 1.0, 1.0), (0.9, 1.0, 1.0), (0.1, 1.0, 1.0), (0.5, 1.0, 9.0), (0.5, 9.0, 1.0)]
-    for pi1, Cfn, Cfp in priors_costs:
-        llrs_mvg = compute_llrs(logS_mvg)
-        optimal_decisions_mvg = compute_optimal_bayes_decisions(llrs_mvg, pi1, Cfn, Cfp)
-        confusion_matrix_mvg = compute_confusion_matrix(optimal_decisions_mvg, LTE)
-        bayes_risk_mvg = compute_bayes_risk(confusion_matrix_mvg, pi1, Cfn, Cfp)
-        normalized_dcf_mvg = compute_normalized_dcf(bayes_risk_mvg, pi1, Cfn, Cfp)
-        print(f"MVG Classifier - Prior: {pi1}, Cfn: {Cfn}, Cfp: {Cfp}")
-        print(f"Bayes Risk: {bayes_risk_mvg}, Normalized DCF: {normalized_dcf_mvg}")
-
-        llrs_tied = compute_llrs(logS_tied)
-        optimal_decisions_tied = compute_optimal_bayes_decisions(llrs_tied, pi1, Cfn, Cfp)
-        confusion_matrix_tied = compute_confusion_matrix(optimal_decisions_tied, LTE)
-        bayes_risk_tied = compute_bayes_risk(confusion_matrix_tied, pi1, Cfn, Cfp)
-        normalized_dcf_tied = compute_normalized_dcf(bayes_risk_tied, pi1, Cfn, Cfp)
-        print(f"Tied Covariance Classifier - Prior: {pi1}, Cfn: {Cfn}, Cfp: {Cfp}")
-        print(f"Bayes Risk: {bayes_risk_tied}, Normalized DCF: {normalized_dcf_tied}")
-
-        llrs_nb = compute_llrs(logS_nb)
-        optimal_decisions_nb = compute_optimal_bayes_decisions(llrs_nb, pi1, Cfn, Cfp)
-        confusion_matrix_nb = compute_confusion_matrix(optimal_decisions_nb, LTE)
-        bayes_risk_nb = compute_bayes_risk(confusion_matrix_nb, pi1, Cfn, Cfp)
-        normalized_dcf_nb = compute_normalized_dcf(bayes_risk_nb, pi1, Cfn, Cfp)
-        print(f"Naive Bayes Classifier - Prior: {pi1}, Cfn: {Cfn}, Cfp: {Cfp}")
-        print(f"Bayes Risk: {bayes_risk_nb}, Normalized DCF: {normalized_dcf_nb}")
-
-    # PCA Analysis
-    pca_dim_values = [2, 4, 6]
-    for pca_dim in pca_dim_values:
-        P_pca = estimate_pca(DTR, pca_dim)
-        DTR_pca = apply_pca(DTR, P_pca)
-        DTE_pca = apply_pca(DTE, P_pca)
-
-        # MVG Classifier with PCA
-        logS_mvg_pca = mvg_classifier(DTR_pca, LTR, DTE_pca)
-        llrs_mvg_pca = compute_llrs(logS_mvg_pca)
-        optimal_decisions_mvg_pca = compute_optimal_bayes_decisions(llrs_mvg_pca, pi1, Cfn, Cfp)
-        confusion_matrix_mvg_pca = compute_confusion_matrix(optimal_decisions_mvg_pca, LTE)
-        bayes_risk_mvg_pca = compute_bayes_risk(confusion_matrix_mvg_pca, pi1, Cfn, Cfp)
-        normalized_dcf_mvg_pca = compute_normalized_dcf(bayes_risk_mvg_pca, pi1, Cfn, Cfp)
-        print(f"MVG Classifier with PCA (dim={pca_dim}) - Prior: {pi1}, Cfn: {Cfn}, Cfp: {Cfp}")
-        print(f"Bayes Risk: {bayes_risk_mvg_pca}, Normalized DCF: {normalized_dcf_mvg_pca}")
-
-        # Tied Covariance Classifier with PCA
-        logS_tied_pca = tied_covariance_classifier(DTR_pca, LTR, DTE_pca)
-        llrs_tied_pca = compute_llrs(logS_tied_pca)
-        optimal_decisions_tied_pca = compute_optimal_bayes_decisions(llrs_tied_pca, pi1, Cfn, Cfp)
-        confusion_matrix_tied_pca = compute_confusion_matrix(optimal_decisions_tied_pca, LTE)
-        bayes_risk_tied_pca = compute_bayes_risk(confusion_matrix_tied_pca, pi1, Cfn, Cfp)
-        normalized_dcf_tied_pca = compute_normalized_dcf(bayes_risk_tied_pca, pi1, Cfn, Cfp)
-        print(f"Tied Covariance Classifier with PCA (dim={pca_dim}) - Prior: {pi1}, Cfn: {Cfn}, Cfp: {Cfp}")
-        print(f"Bayes Risk: {bayes_risk_tied_pca}, Normalized DCF: {normalized_dcf_tied_pca}")
-
-        # Naive Bayes Classifier with PCA
-        logS_nb_pca = naive_bayes_classifier(DTR_pca, LTR, DTE_pca)
-        llrs_nb_pca = compute_llrs(logS_nb_pca)
-        optimal_decisions_nb_pca = compute_optimal_bayes_decisions(llrs_nb_pca, pi1, Cfn, Cfp)
-        confusion_matrix_nb_pca = compute_confusion_matrix(optimal_decisions_nb_pca, LTE)
-        bayes_risk_nb_pca = compute_bayes_risk(confusion_matrix_nb_pca, pi1, Cfn, Cfp)
-        normalized_dcf_nb_pca = compute_normalized_dcf(bayes_risk_nb_pca, pi1, Cfn, Cfp)
-        print(f"Naive Bayes Classifier with PCA (dim={pca_dim}) - Prior: {pi1}, Cfn: {Cfn}, Cfp: {Cfp}")
-        print(f"Bayes Risk: {bayes_risk_nb_pca}, Normalized DCF: {normalized_dcf_nb_pca}")
-
-    # Bayes Error Plots
-    effPriorLogOdds = np.linspace(-3, 3, 21)
-    plot_bayes_error(compute_llrs(logS_mvg), LTE, effPriorLogOdds, 'bayes_error_plot_mvg.png')
-    plot_bayes_error(compute_llrs(logS_tied), LTE, effPriorLogOdds, 'bayes_error_plot_tied.png')
-    plot_bayes_error(compute_llrs(logS_nb), LTE, effPriorLogOdds, 'bayes_error_plot_nb.png')
-
-    # ROC Curve
-    plot_roc_curve(compute_llrs(logS_mvg), LTE, 'roc_curve_mvg.png')
-    plot_roc_curve(compute_llrs(logS_tied), LTE, 'roc_curve_tied.png')
-    plot_roc_curve(compute_llrs(logS_nb), LTE, 'roc_curve_nb.png')
-
-    # Final analysis for best PCA setup
-    best_pca_dim = 4  # Assuming 4 is the best from earlier analysis
-    P_best_pca = estimate_pca(DTR, best_pca_dim)
-    DTR_best_pca = apply_pca(DTR, P_best_pca)
-    DTE_best_pca = apply_pca(DTE, P_best_pca)
-
-    # MVG Classifier with best PCA setup
-    logS_mvg_best_pca = mvg_classifier(DTR_best_pca, LTR, DTE_best_pca)
-    llrs_mvg_best_pca = compute_llrs(logS_mvg_best_pca)
-    optimal_decisions_mvg_best_pca = compute_optimal_bayes_decisions(llrs_mvg_best_pca, pi1, Cfn, Cfp)
-    confusion_matrix_mvg_best_pca = compute_confusion_matrix(optimal_decisions_mvg_best_pca, LTE)
-    bayes_risk_mvg_best_pca = compute_bayes_risk(confusion_matrix_mvg_best_pca, pi1, Cfn, Cfp)
-    normalized_dcf_mvg_best_pca = compute_normalized_dcf(bayes_risk_mvg_best_pca, pi1, Cfn, Cfp)
-    print(f"MVG Classifier with Best PCA (dim={best_pca_dim}) - Prior: {pi1}, Cfn: {Cfn}, Cfp: {Cfp}")
-    print(f"Bayes Risk: {bayes_risk_mvg_best_pca}, Normalized DCF: {normalized_dcf_mvg_best_pca}")
-
-    # Tied Covariance Classifier with best PCA setup
-    logS_tied_best_pca = tied_covariance_classifier(DTR_best_pca, LTR, DTE_best_pca)
-    llrs_tied_best_pca = compute_llrs(logS_tied_best_pca)
-    optimal_decisions_tied_best_pca = compute_optimal_bayes_decisions(llrs_tied_best_pca, pi1, Cfn, Cfp)
-    confusion_matrix_tied_best_pca = compute_confusion_matrix(optimal_decisions_tied_best_pca, LTE)
-    bayes_risk_tied_best_pca = compute_bayes_risk(confusion_matrix_tied_best_pca, pi1, Cfn, Cfp)
-    normalized_dcf_tied_best_pca = compute_normalized_dcf(bayes_risk_tied_best_pca, pi1, Cfn, Cfp)
-    print(f"Tied Covariance Classifier with Best PCA (dim={best_pca_dim}) - Prior: {pi1}, Cfn: {Cfn}, Cfp: {Cfp}")
-    print(f"Bayes Risk: {bayes_risk_tied_best_pca}, Normalized DCF: {normalized_dcf_tied_best_pca}")
-
-    # Naive Bayes Classifier with best PCA setup
-    logS_nb_best_pca = naive_bayes_classifier(DTR_best_pca, LTR, DTE_best_pca)
-    llrs_nb_best_pca = compute_llrs(logS_nb_best_pca)
-    optimal_decisions_nb_best_pca = compute_optimal_bayes_decisions(llrs_nb_best_pca, pi1, Cfn, Cfp)
-    confusion_matrix_nb_best_pca = compute_confusion_matrix(optimal_decisions_nb_best_pca, LTE)
-    bayes_risk_nb_best_pca = compute_bayes_risk(confusion_matrix_nb_best_pca, pi1, Cfn, Cfp)
-    normalized_dcf_nb_best_pca = compute_normalized_dcf(bayes_risk_nb_best_pca, pi1, Cfn, Cfp)
-    print(f"Naive Bayes Classifier with Best PCA (dim={best_pca_dim}) - Prior: {pi1}, Cfn: {Cfn}, Cfp: {Cfp}")
-    print(f"Bayes Risk: {bayes_risk_nb_best_pca}, Normalized DCF: {normalized_dcf_nb_best_pca}")
-
-    # Bayes Error Plots for the best PCA setup
-    plot_bayes_error(compute_llrs(logS_mvg_best_pca), LTE, effPriorLogOdds, 'bayes_error_plot_mvg_best_pca.png')
-    plot_bayes_error(compute_llrs(logS_tied_best_pca), LTE, effPriorLogOdds, 'bayes_error_plot_tied_best_pca.png')
-    plot_bayes_error(compute_llrs(logS_nb_best_pca), LTE, effPriorLogOdds, 'bayes_error_plot_nb_best_pca.png')
-
-    print("Lab 7")
-
-    # Evaluate classifiers with different priors and costs
-    priors_costs = [(0.5, 1.0, 1.0), (0.9, 1.0, 1.0), (0.1, 1.0, 1.0), (0.5, 1.0, 9.0), (0.5, 9.0, 1.0)]
-    for pi1, Cfn, Cfp in priors_costs:
-        llrs_mvg = compute_llrs(logS_mvg)
-        optimal_decisions_mvg = compute_optimal_bayes_decisions(llrs_mvg, pi1, Cfn, Cfp)
-        confusion_matrix_mvg = compute_confusion_matrix(optimal_decisions_mvg, LTE)
-        bayes_risk_mvg = compute_bayes_risk(confusion_matrix_mvg, pi1, Cfn, Cfp)
-        normalized_dcf_mvg = compute_normalized_dcf(bayes_risk_mvg, pi1, Cfn, Cfp)
-        print(f"MVG Classifier - Prior: {pi1}, Cfn: {Cfn}, Cfp: {Cfp}")
-        print(f"Bayes Risk: {bayes_risk_mvg}, Normalized DCF: {normalized_dcf_mvg}")
-
-        llrs_tied = compute_llrs(logS_tied)
-        optimal_decisions_tied = compute_optimal_bayes_decisions(llrs_tied, pi1, Cfn, Cfp)
-        confusion_matrix_tied = compute_confusion_matrix(optimal_decisions_tied, LTE)
-        bayes_risk_tied = compute_bayes_risk(confusion_matrix_tied, pi1, Cfn, Cfp)
-        normalized_dcf_tied = compute_normalized_dcf(bayes_risk_tied, pi1, Cfn, Cfp)
-        print(f"Tied Covariance Classifier - Prior: {pi1}, Cfn: {Cfn}, Cfp: {Cfp}")
-        print(f"Bayes Risk: {bayes_risk_tied}, Normalized DCF: {normalized_dcf_tied}")
-
-        llrs_nb = compute_llrs(logS_nb)
-        optimal_decisions_nb = compute_optimal_bayes_decisions(llrs_nb, pi1, Cfn, Cfp)
-        confusion_matrix_nb = compute_confusion_matrix(optimal_decisions_nb, LTE)
-        bayes_risk_nb = compute_bayes_risk(confusion_matrix_nb, pi1, Cfn, Cfp)
-        normalized_dcf_nb = compute_normalized_dcf(bayes_risk_nb, pi1, Cfn, Cfp)
-        print(f"Naive Bayes Classifier - Prior: {pi1}, Cfn: {Cfn}, Cfp: {Cfp}")
-        print(f"Bayes Risk: {bayes_risk_nb}, Normalized DCF: {normalized_dcf_nb}")
-
-    # PCA Analysis
-    pca_dim_values = [2, 4, 6]
-    for pca_dim in pca_dim_values:
-        P_pca = estimate_pca(DTR, pca_dim)
-        DTR_pca = apply_pca(DTR, P_pca)
-        DTE_pca = apply_pca(DTE, P_pca)
-
-        # MVG Classifier with PCA
-        logS_mvg_pca = mvg_classifier(DTR_pca, LTR, DTE_pca)
-        llrs_mvg_pca = compute_llrs(logS_mvg_pca)
-        optimal_decisions_mvg_pca = compute_optimal_bayes_decisions(llrs_mvg_pca, 0.5, 1.0, 1.0)
-        confusion_matrix_mvg_pca = compute_confusion_matrix(optimal_decisions_mvg_pca, LTE)
-        bayes_risk_mvg_pca = compute_bayes_risk(confusion_matrix_mvg_pca, 0.5, 1.0, 1.0)
-        normalized_dcf_mvg_pca = compute_normalized_dcf(bayes_risk_mvg_pca, 0.5, 1.0, 1.0)
-        print(f"MVG Classifier with PCA (dim={pca_dim}) - Prior: 0.5, Cfn: 1.0, Cfp: 1.0")
-        print(f"Bayes Risk: {bayes_risk_mvg_pca}, Normalized DCF: {normalized_dcf_mvg_pca}")
-
-        # Tied Covariance Classifier with PCA
-        logS_tied_pca = tied_covariance_classifier(DTR_pca, LTR, DTE_pca)
-        llrs_tied_pca = compute_llrs(logS_tied_pca)
-        optimal_decisions_tied_pca = compute_optimal_bayes_decisions(llrs_tied_pca, 0.5, 1.0, 1.0)
-        confusion_matrix_tied_pca = compute_confusion_matrix(optimal_decisions_tied_pca, LTE)
-        bayes_risk_tied_pca = compute_bayes_risk(confusion_matrix_tied_pca, 0.5, 1.0, 1.0)
-        normalized_dcf_tied_pca = compute_normalized_dcf(bayes_risk_tied_pca, 0.5, 1.0, 1.0)
-        print(f"Tied Covariance Classifier with PCA (dim={pca_dim}) - Prior: 0.5, Cfn: 1.0, Cfp: 1.0")
-        print(f"Bayes Risk: {bayes_risk_tied_pca}, Normalized DCF: {normalized_dcf_tied_pca}")
-
-        # Naive Bayes Classifier with PCA
-        logS_nb_pca = naive_bayes_classifier(DTR_pca, LTR, DTE_pca)
-        llrs_nb_pca = compute_llrs(logS_nb_pca)
-        optimal_decisions_nb_pca = compute_optimal_bayes_decisions(llrs_nb_pca, 0.5, 1.0, 1.0)
-        confusion_matrix_nb_pca = compute_confusion_matrix(optimal_decisions_nb_pca, LTE)
-        bayes_risk_nb_pca = compute_bayes_risk(confusion_matrix_nb_pca, 0.5, 1.0, 1.0)
-        normalized_dcf_nb_pca = compute_normalized_dcf(bayes_risk_nb_pca, 0.5, 1.0, 1.0)
-        print(f"Naive Bayes Classifier with PCA (dim={pca_dim}) - Prior: 0.5, Cfn: 1.0, Cfp: 1.0")
-        print(f"Bayes Risk: {bayes_risk_nb_pca}, Normalized DCF: {normalized_dcf_nb_pca}")
-
-    # Best PCA Setup (dim=4)
-    best_pca_dim = 4
-    P_pca = estimate_pca(DTR, best_pca_dim)
-    DTR_pca = apply_pca(DTR, P_pca)
-    DTE_pca = apply_pca(DTE, P_pca)
-
-    # MVG Classifier with Best PCA
-    logS_mvg_best_pca = mvg_classifier(DTR_pca, LTR, DTE_pca)
-    llrs_mvg_best_pca = compute_llrs(logS_mvg_best_pca)
-    plot_bayes_error(llrs_mvg_best_pca, LTE, np.linspace(-3, 3, 21), 'bayes_error_plot_mvg_best_pca.png')
-
-    # Tied Covariance Classifier with Best PCA
-    logS_tied_best_pca = tied_covariance_classifier(DTR_pca, LTR, DTE_pca)
-    llrs_tied_best_pca = compute_llrs(logS_tied_best_pca)
-    plot_bayes_error(llrs_tied_best_pca, LTE, np.linspace(-3, 3, 21), 'bayes_error_plot_tied_best_pca.png')
-
-    # Naive Bayes Classifier with Best PCA
-    logS_nb_best_pca = naive_bayes_classifier(DTR_pca, LTR, DTE_pca)
-    llrs_nb_best_pca = compute_llrs(logS_nb_best_pca)
-    plot_bayes_error(llrs_nb_best_pca, LTE, np.linspace(-3, 3, 21), 'bayes_error_plot_nb_best_pca.png')
-
-    # ROC Curves
-    plot_roc_curve(compute_llrs(logS_mvg), LTE, 'roc_curve_mvg.png')
-    plot_roc_curve(compute_llrs(logS_tied), LTE, 'roc_curve_tied.png')
-    plot_roc_curve(compute_llrs(logS_nb), LTE, 'roc_curve_nb.png')
-
-    print("Lab 8")
-
-    # 1. Compute actual DCF and minimum DCF for the primary application (πT = 0.1):
-    # Logistic Regression without preprocessing
-    lambdas = np.logspace(-4, 2, 13)
-    actual_dcf = []
-    min_dcf = []
-
-    for l in lambdas:
-        model = train_logreg(DTR, LTR, l)
-        scores = compute_logreg_scores(DTE, model)
-        predictions = compute_logreg_predictions(scores)
-        error = compute_error_rate(predictions, LTE)
-        print(f"Logistic Regression Error Rate (λ={l}): {error}")
-
-        empirical_prior = LTR.mean()
-        adjusted_scores = scores - np.log(empirical_prior / (1 - empirical_prior))
-
-        optimal_decisions = compute_optimal_bayes_decisions(adjusted_scores, 0.1, 1.0, 1.0)
-        confusion_matrix = compute_confusion_matrix(optimal_decisions, LTE)
-        bayes_risk = compute_bayes_risk(confusion_matrix, 0.1, 1.0, 1.0)
-        norm_dcf = compute_normalized_dcf(bayes_risk, 0.1, 1.0, 1.0)
-        min_dcf.append(norm_dcf)
-
-        actual_decisions = (adjusted_scores >= 0).astype(int)
-        actual_confusion_matrix = compute_confusion_matrix(actual_decisions, LTE)
-        actual_bayes_risk = compute_bayes_risk(actual_confusion_matrix, 0.1, 1.0, 1.0)
-        actual_norm_dcf = compute_normalized_dcf(actual_bayes_risk, 0.1, 1.0, 1.0)
-        actual_dcf.append(actual_norm_dcf)
-
-    plot_metrics(lambdas, actual_dcf, min_dcf, "Logistic Regression DCFs")
-
-    # 2. Repeat the analysis with reduced dataset:
-    # Logistic Regression with reduced dataset
-    actual_dcf_reduced = []
-    min_dcf_reduced = []
-
-    for l in lambdas:
-        DTR_reduced = DTR[:, ::50]
-        LTR_reduced = LTR[::50]
-        model = train_logreg(DTR_reduced, LTR_reduced, l)
-        scores = compute_logreg_scores(DTE, model)
-        predictions = compute_logreg_predictions(scores)
-        error = compute_error_rate(predictions, LTE)
-        print(f"Logistic Regression Error Rate with Reduced Data (λ={l}): {error}")
-
-        empirical_prior = LTR_reduced.mean()
-        adjusted_scores = scores - np.log(empirical_prior / (1 - empirical_prior))
-
-        optimal_decisions = compute_optimal_bayes_decisions(adjusted_scores, 0.1, 1.0, 1.0)
-        confusion_matrix = compute_confusion_matrix(optimal_decisions, LTE)
-        bayes_risk = compute_bayes_risk(confusion_matrix, 0.1, 1.0, 1.0)
-        norm_dcf = compute_normalized_dcf(bayes_risk, 0.1, 1.0, 1.0)
-        min_dcf_reduced.append(norm_dcf)
-
-        actual_decisions = (adjusted_scores >= 0).astype(int)
-        actual_confusion_matrix = compute_confusion_matrix(actual_decisions, LTE)
-        actual_bayes_risk = compute_bayes_risk(actual_confusion_matrix, 0.1, 1.0, 1.0)
-        actual_norm_dcf = compute_normalized_dcf(actual_bayes_risk, 0.1, 1.0, 1.0)
-        actual_dcf_reduced.append(actual_norm_dcf)
-
-    plot_metrics(lambdas, actual_dcf_reduced, min_dcf_reduced, "Logistic Regression DCFs with Reduced Data")
-
-    # 3. Repeat the analysis with prior-weighted logistic regression model:
-    # Prior-Weighted Logistic Regression
-    actual_dcf_prior_weighted = []
-    min_dcf_prior_weighted = []
-
-    for l in lambdas:
-        model = train_logreg(DTR, LTR, l)
-        scores = compute_logreg_scores(DTE, model)
-        predictions = compute_logreg_predictions(scores)
-        error = compute_error_rate(predictions, LTE)
-        print(f"Prior-Weighted Logistic Regression Error Rate (λ={l}): {error}")
-
-        adjusted_scores = scores - np.log(0.1 / (1 - 0.1))
-
-        optimal_decisions = compute_optimal_bayes_decisions(adjusted_scores, 0.1, 1.0, 1.0)
-        confusion_matrix = compute_confusion_matrix(optimal_decisions, LTE)
-        bayes_risk = compute_bayes_risk(confusion_matrix, 0.1, 1.0, 1.0)
-        norm_dcf = compute_normalized_dcf(bayes_risk, 0.1, 1.0, 1.0)
-        min_dcf_prior_weighted.append(norm_dcf)
-
-        actual_decisions = (adjusted_scores >= 0).astype(int)
-        actual_confusion_matrix = compute_confusion_matrix(actual_decisions, LTE)
-        actual_bayes_risk = compute_bayes_risk(actual_confusion_matrix, 0.1, 1.0, 1.0)
-        actual_norm_dcf = compute_normalized_dcf(actual_bayes_risk, 0.1, 1.0, 1.0)
-        actual_dcf_prior_weighted.append(actual_norm_dcf)
-
-    plot_metrics(lambdas, actual_dcf_prior_weighted, min_dcf_prior_weighted, "Prior-Weighted Logistic Regression DCFs")
-
-    # 4. Repeat the analysis with quadratic logistic regression model:
-    # Quadratic Logistic Regression
-    def expand_quadratic_features(D):
-        num_features = D.shape[0]
-        num_samples = D.shape[1]
-        expanded_D = np.zeros((num_features + num_features * (num_features + 1) // 2, num_samples))
-        expanded_D[:num_features, :] = D
-
-        idx = num_features
-        for i in range(num_features):
-            for j in range(i, num_features):
-                expanded_D[idx, :] = D[i, :] * D[j, :]
-                idx += 1
-
-        return expanded_D
-
-    DTR_quad = expand_quadratic_features(DTR)
-    DTE_quad = expand_quadratic_features(DTE)
-
-    actual_dcf_quad = []
-    min_dcf_quad = []
-
-    for l in lambdas:
-        model = train_logreg(DTR_quad, LTR, l)
-        scores = compute_logreg_scores(DTE_quad, model)
-        predictions = compute_logreg_predictions(scores)
-        error = compute_error_rate(predictions, LTE)
-        print(f"Quadratic Logistic Regression Error Rate (λ={l}): {error}")
-
-        empirical_prior = LTR.mean()
-        adjusted_scores = scores - np.log(empirical_prior / (1 - empirical_prior))
-
-        optimal_decisions = compute_optimal_bayes_decisions(adjusted_scores, 0.1, 1.0, 1.0)
-        confusion_matrix = compute_confusion_matrix(optimal_decisions, LTE)
-        bayes_risk = compute_bayes_risk(confusion_matrix, 0.1, 1.0, 1.0)
-        norm_dcf = compute_normalized_dcf(bayes_risk, 0.1, 1.0, 1.0)
-        min_dcf_quad.append(norm_dcf)
-
-        actual_decisions = (adjusted_scores >= 0).astype(int)
-        actual_confusion_matrix = compute_confusion_matrix(actual_decisions, LTE)
-        actual_bayes_risk = compute_bayes_risk(actual_confusion_matrix, 0.1, 1.0, 1.0)
-        actual_norm_dcf = compute_normalized_dcf(actual_bayes_risk, 0.1, 1.0, 1.0)
-        actual_dcf_quad.append(actual_norm_dcf)
-
-    plot_metrics(lambdas, actual_dcf_quad, min_dcf_quad, "Quadratic Logistic Regression DCFs")
-
-    # 5. Analyze the effects of centering on the model results:
-    # Analyze the effects of centering on the model results
-
-    # Center the data
-    DTR_centered, mean = center_data(DTR)
-    DTE_centered, _ = center_data(DTE, mean)
-
-    actual_dcf_centered = []
-    min_dcf_centered = []
-
-    for l in lambdas:
-        model = train_logreg(DTR_centered, LTR, l)
-        scores = compute_logreg_scores(DTE_centered, model)
-        predictions = compute_logreg_predictions(scores)
-        error = compute_error_rate(predictions, LTE)
-        print(f"Centered Logistic Regression Error Rate (λ={l}): {error}")
-
-        empirical_prior = LTR.mean()
-        adjusted_scores = scores - np.log(empirical_prior / (1 - empirical_prior))
-
-        optimal_decisions = compute_optimal_bayes_decisions(adjusted_scores, 0.1, 1.0, 1.0)
-        confusion_matrix = compute_confusion_matrix(optimal_decisions, LTE)
-        bayes_risk = compute_bayes_risk(confusion_matrix, 0.1, 1.0, 1.0)
-        norm_dcf = compute_normalized_dcf(bayes_risk, 0.1, 1.0, 1.0)
-        min_dcf_centered.append(norm_dcf)
-
-        actual_decisions = (adjusted_scores >= 0).astype(int)
-        actual_confusion_matrix = compute_confusion_matrix(actual_decisions, LTE)
-        actual_bayes_risk = compute_bayes_risk(actual_confusion_matrix, 0.1, 1.0, 1.0)
-        actual_norm_dcf = compute_normalized_dcf(actual_bayes_risk, 0.1, 1.0, 1.0)
-        actual_dcf_centered.append(actual_norm_dcf)
-
-    plot_metrics(lambdas, actual_dcf_centered, min_dcf_centered, "Centered Logistic Regression DCFs")
-
-    # 6. Compare all models in terms of minDCF for the target application (πT = 0.1):
-    # Compare all models in terms of minDCF for the target application (πT = 0.1)
-    min_dcf_all_models = {
-        'MVG': [],
-        'Tied Covariance': [],
-        'Naive Bayes': [],
-        'Logistic Regression': [],
-        'Prior-Weighted Logistic Regression': [],
-        'Quadratic Logistic Regression': [],
-        'Centered Logistic Regression': []
-    }
-
-    # Add MVG results
-    logS_mvg = mvg_classifier(DTR, LTR, DTE)
-    llrs_mvg = compute_llrs(logS_mvg)
-    optimal_decisions_mvg = compute_optimal_bayes_decisions(llrs_mvg, 0.1, 1.0, 1.0)
-    confusion_matrix_mvg = compute_confusion_matrix(optimal_decisions_mvg, LTE)
-    bayes_risk_mvg = compute_bayes_risk(confusion_matrix_mvg, 0.1, 1.0, 1.0)
-    norm_dcf_mvg = compute_normalized_dcf(bayes_risk_mvg, 0.1, 1.0, 1.0)
-    min_dcf_all_models['MVG'].append(norm_dcf_mvg)
-
-    # Add Tied Covariance results
-    logS_tied = tied_covariance_classifier(DTR, LTR, DTE)
-    llrs_tied = compute_llrs(logS_tied)
-    optimal_decisions_tied = compute_optimal_bayes_decisions(llrs_tied, 0.1, 1.0, 1.0)
-    confusion_matrix_tied = compute_confusion_matrix(optimal_decisions_tied, LTE)
-    bayes_risk_tied = compute_bayes_risk(confusion_matrix_tied, 0.1, 1.0, 1.0)
-    norm_dcf_tied = compute_normalized_dcf(bayes_risk_tied, 0.1, 1.0, 1.0)
-    min_dcf_all_models['Tied Covariance'].append(norm_dcf_tied)
-
-    # Add Naive Bayes results
-    logS_nb = naive_bayes_classifier(DTR, LTR, DTE)
-    llrs_nb = compute_llrs(logS_nb)
-    optimal_decisions_nb = compute_optimal_bayes_decisions(llrs_nb, 0.1, 1.0, 1.0)
-    confusion_matrix_nb = compute_confusion_matrix(optimal_decisions_nb, LTE)
-    bayes_risk_nb = compute_bayes_risk(confusion_matrix_nb, 0.1, 1.0, 1.0)
-    norm_dcf_nb = compute_normalized_dcf(bayes_risk_nb, 0.1, 1.0, 1.0)
-    min_dcf_all_models['Naive Bayes'].append(norm_dcf_nb)
-
-    # Add Logistic Regression results
-    for l in lambdas:
-        model = train_logreg(DTR, LTR, l)
-        scores = compute_logreg_scores(DTE, model)
-        empirical_prior = LTR.mean()
-        adjusted_scores = scores - np.log(empirical_prior / (1 - empirical_prior))
-        optimal_decisions = compute_optimal_bayes_decisions(adjusted_scores, 0.1, 1.0, 1.0)
-        confusion_matrix = compute_confusion_matrix(optimal_decisions, LTE)
-        bayes_risk = compute_bayes_risk(confusion_matrix, 0.1, 1.0, 1.0)
-        norm_dcf = compute_normalized_dcf(bayes_risk, 0.1, 1.0, 1.0)
-        min_dcf_all_models['Logistic Regression'].append(norm_dcf)
-
-    # Add Prior-Weighted Logistic Regression results
-    for l in lambdas:
-        model = train_logreg(DTR, LTR, l)
-        scores = compute_logreg_scores(DTE, model)
-        adjusted_scores = scores - np.log(0.1 / (1 - 0.1))
-        optimal_decisions = compute_optimal_bayes_decisions(adjusted_scores, 0.1, 1.0, 1.0)
-        confusion_matrix = compute_confusion_matrix(optimal_decisions, LTE)
-        bayes_risk = compute_bayes_risk(confusion_matrix, 0.1, 1.0, 1.0)
-        norm_dcf = compute_normalized_dcf(bayes_risk, 0.1, 1.0, 1.0)
-        min_dcf_all_models['Prior-Weighted Logistic Regression'].append(norm_dcf)
-
-    # Add Quadratic Logistic Regression results
-    DTR_quad = expand_quadratic_features(DTR)
-    DTE_quad = expand_quadratic_features(DTE)
-    for l in lambdas:
-        model = train_logreg(DTR_quad, LTR, l)
-        scores = compute_logreg_scores(DTE_quad, model)
-        empirical_prior = LTR.mean()
-        adjusted_scores = scores - np.log(empirical_prior / (1 - empirical_prior))
-        optimal_decisions = compute_optimal_bayes_decisions(adjusted_scores, 0.1, 1.0, 1.0)
-        confusion_matrix = compute_confusion_matrix(optimal_decisions, LTE)
-        bayes_risk = compute_bayes_risk(confusion_matrix, 0.1, 1.0, 1.0)
-        norm_dcf = compute_normalized_dcf(bayes_risk, 0.1, 1.0, 1.0)
-        min_dcf_all_models['Quadratic Logistic Regression'].append(norm_dcf)
-
-    # Add Centered Logistic Regression results
-    DTR_centered, mean = center_data(DTR)
-    DTE_centered, _ = center_data(DTE, mean)
-    for l in lambdas:
-        model = train_logreg(DTR_centered, LTR, l)
-        scores = compute_logreg_scores(DTE_centered, model)
-        empirical_prior = LTR.mean()
-        adjusted_scores = scores - np.log(empirical_prior / (1 - empirical_prior))
-        optimal_decisions = compute_optimal_bayes_decisions(adjusted_scores, 0.1, 1.0, 1.0)
-        confusion_matrix = compute_confusion_matrix(optimal_decisions, LTE)
-        bayes_risk = compute_bayes_risk(confusion_matrix, 0.1, 1.0, 1.0)
-        norm_dcf = compute_normalized_dcf(bayes_risk, 0.1, 1.0, 1.0)
-        min_dcf_all_models['Centered Logistic Regression'].append(norm_dcf)
-
-    # Plot comparison of all models
-    for model_name, dcfs in min_dcf_all_models.items():
-        if len(dcfs) == len(lambdas):
-            plt.plot(lambdas, dcfs, label=model_name)
-
-    plt.xscale('log')
-    plt.xlabel('Lambda')
-    plt.ylabel('Min DCF')
-    plt.title('Comparison of all models (Min DCF)')
-    plt.legend()
-    plt.grid(True)
-    plt.savefig('comparison_min_dcf.png')
-    plt.close()
-
-    print("Lab 9")
-
-    # Define the range of hyperparameters
-    Cs = np.logspace(-5, 0, 11)
-    gammas = np.logspace(-4, -1, 4)
-
-    # Running the SVM models
-    run_linear_svm(DTR, LTR, DTE, LTE, Cs, centered=False)
-    run_linear_svm(DTR, LTR, DTE, LTE, Cs, centered=True)
-    run_polynomial_svm(DTR, LTR, DTE, LTE, Cs, degree=2, c=1)
-    run_rbf_svm(DTR, LTR, DTE, LTE, Cs, gammas)
-'''
 
 def Univariate_model(DTE, DTR, LTE, LTR):
     mvg_classifier = GaussianClassifier()
     mvg_classifier.fit_univariate_gaussian_models(DTR, LTR)
-
-
 
 
 if __name__ == "__main__":

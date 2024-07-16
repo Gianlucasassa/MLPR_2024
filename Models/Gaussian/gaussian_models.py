@@ -450,8 +450,7 @@ def train_MVG(DTE, DTR, LTE, LTR):
             roc_auc = auc(fpr, tpr)
             plot_roc_curve(fpr, tpr, roc_auc, f"{model_name}_PCA_{pca_dim}", os.path.join(output_dir, f'roc_curve_{model_name}_PCA_{pca_dim}.png'))
 
-            plot_bayes_error(llrs, LTE, np.linspace(-3, 3, 21),
-                             os.path.join(output_dir, f'bayes_error_plot_{model_name}_PCA_{pca_dim}.png'))
+            plot_bayes_error(llrs, LTE, np.linspace(-3, 3, 21), os.path.join(output_dir, f'bayes_error_plot_{model_name}_PCA_{pca_dim}.png'))
 
 
 
