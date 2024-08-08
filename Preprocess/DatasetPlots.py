@@ -6,7 +6,11 @@ import os
 from load import data_statistics_light
 
 
-def plot_feature_distributions(D, L, output_dir='Output/FeatureDistributions', origin='main'):
+import os
+import numpy as np
+import matplotlib.pyplot as plt
+
+def plot_feature_distributions(D, L, output_dir='Output/FeatureDistributions', origin='main', num_bins=10):
     """
     Plots and saves histograms of feature distributions separated by class.
 
@@ -14,6 +18,7 @@ def plot_feature_distributions(D, L, output_dir='Output/FeatureDistributions', o
     D (numpy.ndarray): 2D data array with features in rows and samples in columns.
     L (numpy.ndarray): 1D array of labels corresponding to the columns of D.
     output_dir (str): The directory where plots will be saved.
+    num_bins (int): Number of bins for the histograms.
     """
     num_features = D.shape[0]  # Number of features
 
@@ -39,12 +44,11 @@ def plot_feature_distributions(D, L, output_dir='Output/FeatureDistributions', o
 
     # Create histograms for each feature
     for i in range(num_features):
-        plt.figure(figsize=(10, 6))
-        num_bins = 20  # Example bin size; adjust as necessary
+        plt.figure(figsize=(8, 5))  # Smaller figure size
 
         # Plot histograms for genuine and fake classes
-        plt.hist(D_genuine[i, :], bins=num_bins, alpha=0.5, label='Genuine', density=True)
-        plt.hist(D_fake[i, :], bins=num_bins, alpha=0.5, label='Fake', density=True)
+        plt.hist(D_genuine[i, :], bins=num_bins, alpha=0.5, label='Genuine', density=True, color='blue')
+        plt.hist(D_fake[i, :], bins=num_bins, alpha=0.5, label='Fake', density=True, color='orange')
 
         plt.title(f'Distribution of Feature {i + 1}{add_on}')
         plt.xlabel(f'Feature {i + 1} Value')
@@ -79,7 +83,11 @@ def plot_feature_pairs(D, L, output_dir='Output/FeaturePairPlots', origin='main'
     if origin.startswith("PCA"):
         add_on = f" - PCA with {origin.split('_')[1]}"
         add_on_save = f"-PCA{origin.split('_')[1]}"
-        print("found Pca fp")
+
+    elif origin.startswith("LDA"):
+        add_on = " - LDA"
+        add_on_save = "-LDA"
+
     else:
         add_on = ""
         add_on_save = ""
@@ -133,7 +141,7 @@ def compute_standard_deviation(D):
     return std_dev
 
 
-def plot_histograms(D, L, output_dir='Output/Histograms'):
+def plot_histograms(D, L, output_dir='Output/Dataset/Histograms'):
     os.makedirs(output_dir, exist_ok=True)
     features = D.shape[0]
     classes = np.unique(L)
@@ -150,7 +158,7 @@ def plot_histograms(D, L, output_dir='Output/Histograms'):
         plt.close()  # Close the figure to free memory
 
 
-def plot_pairwise_scatter(D, L, output_dir='Output/ScatterPlots'):
+def plot_pairwise_scatter(D, L, output_dir='Output/Dataset/ScatterPlots'):
     os.makedirs(output_dir, exist_ok=True)
     features = D.shape[0]
     classes = np.unique(L)
@@ -395,8 +403,8 @@ def data_analysis(DTR, LTR):
     data_statistics_light(DTR, LTR)
     # Additional Analysis
     DC, _ = center_data(DTR)
-    plot_feature_pairs(DC, LTR, output_dir='Output/CenteredFeaturePairPlots', origin='main')
-    plot_feature_distributions(DC, LTR, output_dir='Output/CenteredFeatureDistributions', origin='main')
+    plot_feature_pairs(DC, LTR, output_dir='Output/Dataset/CenteredFeaturePairPlots', origin='main')
+    plot_feature_distributions(DC, LTR, output_dir='Output/Dataset/CenteredFeatureDistributions', origin='main')
     for i in range(2):
         print(f"Class {i}")
         variance = DTR.var(i)
@@ -422,7 +430,7 @@ def data_analysis(DTR, LTR):
     # Plot histograms and scatter plots
     plot_histograms(DTR, LTR)
     plot_pairwise_scatter(DTR, LTR)
-    plot_histograms(DC, LTR, output_dir='Output/CenteredHistograms')
-    plot_pairwise_scatter(DC, LTR, output_dir='Output/CenteredScatterPlots')
+    plot_histograms(DC, LTR, output_dir='Output/Dataset/CenteredHistograms')
+    plot_pairwise_scatter(DC, LTR, output_dir='Output/Dataset/CenteredScatterPlots')
 
 

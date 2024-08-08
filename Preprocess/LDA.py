@@ -2,43 +2,91 @@ import scipy.linalg
 from Preprocess.PCA import *
 
 
-def vrow(col):
-    return col.reshape((1, col.size))
+def vcol(x):  # Same as in pca script
+    return x.reshape((x.size, 1))
 
 
-def vcol(row):
-    return row.reshape((row.size, 1))
+def vrow(x):  # Same as in pca script
+    return x.reshape((1, x.size))
 
 
-def compute_class_means(D, L):
+def compute_mu_C(D):  # Same as in pca script
+    mu = vcol(D.mean(1))
+    C = ((D - mu) @ (D - mu).T) / float(D.shape[1])
+    return mu, C
 
-    classes = np.unique(L)
-    means = []
-    for cls in classes:
-        class_data = D[:, L == cls]
-        means.append(class_data.mean(axis=1).reshape(-1, 1))
-    return means
 
 def compute_Sb_Sw(D, L):
-
     Sb = 0
     Sw = 0
     muGlobal = vcol(D.mean(1))
-    for i in np.unique(L):
+    for i in numpy.unique(L):
         DCls = D[:, L == i]
         mu = vcol(DCls.mean(1))
         Sb += (mu - muGlobal) @ (mu - muGlobal).T * DCls.shape[1]
         Sw += (DCls - mu) @ (DCls - mu).T
     return Sb / D.shape[1], Sw / D.shape[1]
 
-def compute_lda_projection_matrix(D, L, m):
 
+def compute_lda_geig(D, L, m):
     Sb, Sw = compute_Sb_Sw(D, L)
     s, U = scipy.linalg.eigh(Sb, Sw)
-    return U[:, ::-1][:, :m]
+    return U[:, ::-1][:, 0:m]
 
-def apply_lda(D, P_lda):
-    return P_lda.T @ D
+
+def compute_lda_JointDiag(D, L, m):
+    Sb, Sw = compute_Sb_Sw(D, L)
+
+    U, s, _ = numpy.linalg.svd(Sw)
+    P = numpy.dot(U * vrow(1.0 / (s ** 0.5)), U.T)
+
+    Sb2 = numpy.dot(P, numpy.dot(Sb, P.T))
+    U2, s2, _ = numpy.linalg.svd(Sb2)
+
+    P2 = U2[:, 0:m]
+    return numpy.dot(P2.T, P).T
+
+
+def apply_lda(U, D):
+    return U.T @ D
+
+# def vrow(col):
+#     return col.reshape((1, col.size))
+#
+#
+# def vcol(row):
+#     return row.reshape((row.size, 1))
+#
+#
+# def compute_class_means(D, L):
+#
+#     classes = np.unique(L)
+#     means = []
+#     for cls in classes:
+#         class_data = D[:, L == cls]
+#         means.append(class_data.mean(axis=1).reshape(-1, 1))
+#     return means
+#
+# def compute_Sb_Sw(D, L):
+#
+#     Sb = 0
+#     Sw = 0
+#     muGlobal = vcol(D.mean(1))
+#     for i in np.unique(L):
+#         DCls = D[:, L == i]
+#         mu = vcol(DCls.mean(1))
+#         Sb += (mu - muGlobal) @ (mu - muGlobal).T * DCls.shape[1]
+#         Sw += (DCls - mu) @ (DCls - mu).T
+#     return Sb / D.shape[1], Sw / D.shape[1]
+#
+# def compute_lda_projection_matrix(D, L, m):
+#
+#     Sb, Sw = compute_Sb_Sw(D, L)
+#     s, U = scipy.linalg.eigh(Sb, Sw)
+#     return U[:, ::-1][:, :m]
+#
+# def apply_lda(D, P_lda):
+#     return P_lda.T @ D
 
 
 

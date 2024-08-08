@@ -1,9 +1,11 @@
+import os
 import sys
 import numpy as np
 import string
 import scipy.special
 import itertools
 import pandas as pd
+from matplotlib import pyplot as plt
 
 
 def load_data(file_path):
@@ -138,3 +140,47 @@ def loadFile(filename):
 
     # Concatenazione degli array di attributi e conversione delle etichette in array numpy
     return np.hstack(data_list), np.array(labels_list, dtype=np.int32)
+
+
+def plot_hist(D, L):
+    D0 = D[:, L == 0]
+    D1 = D[:, L == 1]
+
+    output_dir = "Old_Output/Output/Dataset"
+    os.makedirs(output_dir, exist_ok=True)
+
+    for dIdx in range(6):
+        plt.figure()
+        plt.xlabel(f"Feature {dIdx}")
+        plt.hist(D0[dIdx, :], bins=10, density=True, alpha=0.4, label='Fake')
+        plt.hist(D1[dIdx, :], bins=10, density=True, alpha=0.4, label='Genuine')
+
+        plt.legend()
+        plt.tight_layout()  # Use with non-default font size to keep axis label inside the figure
+        filename = f"Histogram_Feature_{dIdx+1}"
+        plt.savefig(os.path.join(output_dir, filename))
+
+
+
+def plot_scatter(D, L):
+    D0 = D[:, L == 0]
+    D1 = D[:, L == 1]
+
+    output_dir = "Old_Output/Output/Dataset"
+    os.makedirs(output_dir, exist_ok=True)
+
+    for dIdx1 in range(4):
+        for dIdx2 in range(4):
+            if dIdx1 == dIdx2:
+                continue
+            plt.figure()
+            plt.xlabel(f"Feature {dIdx1}")
+            plt.ylabel(f"Feature {dIdx2}")
+            plt.scatter(D0[dIdx1, :], D0[dIdx2, :], label='Fake')
+            plt.scatter(D1[dIdx1, :], D1[dIdx2, :], label='Genuine')
+
+            plt.legend()
+            plt.tight_layout()  # Use with non-default font size to keep axis label inside the figure
+
+            filename = f'Scatter_Features_{dIdx1+1}_{dIdx2+1}.pdf'
+            plt.savefig(os.path.join(output_dir, filename))

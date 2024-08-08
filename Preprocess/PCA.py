@@ -5,126 +5,231 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 from Preprocess.DatasetPlots import center_data, split_dataset, plot_feature_distributions, plot_feature_pairs
-from Preprocess.LDA import lda_classification, compute_lda_projection_matrix, apply_lda, plot_lda_histogram, \
-    find_best_threshold, classify
+from Preprocess.LDA import *
 
 
-def vrow(col):
-    return col.reshape((1, col.size))
+# def vrow(col):
+#     return col.reshape((1, col.size))
+#
+#
+# def vcol(row):
+#     return row.reshape((row.size, 1))
+#
+#
+# def compute_covariance_matrix(DC):
+#     """
+#     Computes the covariance matrix for the centered data.
+#
+#     Args:
+#     DC (numpy.ndarray): The centered data matrix.
+#
+#     Returns:
+#     numpy.ndarray: The covariance matrix.
+#     """
+#     return np.dot(DC, DC.T) / DC.shape[1]
+#
+#
+# def calculate_centered_covariance(DC):
+#     """
+#     Calculates the covariance matrix for centered data.
+#
+#     Args:
+#     DC (numpy.ndarray): The centered data matrix.
+#
+#     Returns:
+#     numpy.ndarray: The covariance matrix.
+#     """
+#     C = 0
+#     for i in range(DC.shape[1]):
+#         C += np.dot(DC[:, i:i + 1], DC[:, i:i + 1].T)
+#     C /= float(DC.shape[1])
+#     return C
+#
+#
+# def plot_pca_explained_variance(D, output_dir='Output/PCA'):
+#     DC, _ = center_data(D)
+#     C = calculate_covariance(DC)
+#     eigenvalues, _ = np.linalg.eigh(C)
+#     eigenvalues = eigenvalues[::-1]
+#     explained_variance = eigenvalues / np.sum(eigenvalues)
+#     cumulative_explained_variance = np.cumsum(explained_variance)
+#
+#     plt.figure()
+#     plt.plot(np.arange(1, len(eigenvalues) + 1), cumulative_explained_variance, marker='o')
+#     plt.xlabel('Number of Components')
+#     plt.ylabel('Cumulative Explained Variance')
+#     plt.title('Explained Variance by Principal Components')
+#     plt.grid()
+#
+#     plt.axhline(y=0.95, color='r', linestyle='--', label='95% Explained Variance')
+#     num_components_95 = np.argmax(cumulative_explained_variance >= 0.95) + 1
+#     plt.scatter(num_components_95, 0.95, color='red')
+#     plt.annotate(f'{num_components_95} components',
+#                  xy=(num_components_95, 0.95),
+#                  xytext=(num_components_95 + 1, 0.90),
+#                  arrowprops=dict(facecolor='black', shrink=0.05))
+#
+#     plt.legend(loc='lower right')
+#
+#     os.makedirs(output_dir, exist_ok=True)
+#     plt.savefig(os.path.join(output_dir, 'PCA_Explained_Variance_Improved.png'))
+#     plt.close()
+#
+#
+# def plot_pca_histograms(D, L, pca_dim=6, output_dir='Output/PCA_Histograms', mode='Train'):
+#     D_pca, P_pca = apply_PCA_from_dim(D, pca_dim)
+#
+#     for i in range(pca_dim):
+#         plt.figure()
+#         for cls in np.unique(L):
+#             plt.hist(D_pca[i, L == cls], bins=30, alpha=0.5, label=f'Class {cls}')
+#         plt.xlabel(f'PCA Component {i + 1}')
+#         plt.ylabel('Frequency')
+#         plt.legend()
+#         plt.title(f'Histogram of PCA Component {i + 1} - {mode}in Set')
+#         os.makedirs(output_dir, exist_ok=True)
+#         plt.savefig(os.path.join(output_dir, f'PCA_Component_{i + 1}_Histogram_{mode}.png'))
+#         plt.close()
+#
+#
+# def compute_mu_C(D):
+#     mu = vcol(D.mean(1))
+#     C = ((D-mu) @ (D-mu).T) / float(D.shape[1])
+#     return mu, C
+#
+#
+# def calculate_covariance(D):
+#     mu, C = compute_mu_C(D)
+#     return C
+#
+#
+# def calculate_pca_projection_matrix(C, m):
+#     U, s, Vh = np.linalg.svd(C)
+#     P_pca = U[:, :m]
+#     return P_pca
+#
+#
+# def apply_pca(P, D):
+#     return P.T @ D
+#
+#
+# def apply_PCA_from_dim(D, m):
+#     DC, _ = center_data(D)
+#     C = calculate_covariance(DC)
+#     P_pca = calculate_pca_projection_matrix(C, m)
+#     D_pca = apply_pca(D, P_pca)
+#     return D_pca, P_pca
+#
+#
+# def compute_pca(D, m):
+#
+#     mu, C = compute_mu_C(D)
+#     U, s, Vh = numpy.linalg.svd(C)
+#     P = U[:, 0:m]
+#     return P
 
 
-def vcol(row):
-    return row.reshape((row.size, 1))
 
+def vcol(x):
+    return x.reshape((x.size, 1))
 
-def compute_covariance_matrix(DC):
-    """
-    Computes the covariance matrix for the centered data.
-
-    Args:
-    DC (numpy.ndarray): The centered data matrix.
-
-    Returns:
-    numpy.ndarray: The covariance matrix.
-    """
-    return np.dot(DC, DC.T) / DC.shape[1]
-
-
-def calculate_centered_covariance(DC):
-    """
-    Calculates the covariance matrix for centered data.
-
-    Args:
-    DC (numpy.ndarray): The centered data matrix.
-
-    Returns:
-    numpy.ndarray: The covariance matrix.
-    """
-    C = 0
-    for i in range(DC.shape[1]):
-        C += np.dot(DC[:, i:i + 1], DC[:, i:i + 1].T)
-    C /= float(DC.shape[1])
-    return C
-
-
-def plot_pca_explained_variance(D, output_dir='Output/PCA'):
-    DC, _ = center_data(D)
-    C = calculate_covariance(DC)
-    eigenvalues, _ = np.linalg.eigh(C)
-    eigenvalues = eigenvalues[::-1]
-    explained_variance = eigenvalues / np.sum(eigenvalues)
-    cumulative_explained_variance = np.cumsum(explained_variance)
-
-    plt.figure()
-    plt.plot(np.arange(1, len(eigenvalues) + 1), cumulative_explained_variance, marker='o')
-    plt.xlabel('Number of Components')
-    plt.ylabel('Cumulative Explained Variance')
-    plt.title('Explained Variance by Principal Components')
-    plt.grid()
-
-    plt.axhline(y=0.95, color='r', linestyle='--', label='95% Explained Variance')
-    num_components_95 = np.argmax(cumulative_explained_variance >= 0.95) + 1
-    plt.scatter(num_components_95, 0.95, color='red')
-    plt.annotate(f'{num_components_95} components',
-                 xy=(num_components_95, 0.95),
-                 xytext=(num_components_95 + 1, 0.90),
-                 arrowprops=dict(facecolor='black', shrink=0.05))
-
-    plt.legend(loc='lower right')
-
-    os.makedirs(output_dir, exist_ok=True)
-    plt.savefig(os.path.join(output_dir, 'PCA_Explained_Variance_Improved.png'))
-    plt.close()
-
-
-def plot_pca_histograms(D, L, pca_dim=6, output_dir='Output/PCA_Histograms', mode='Train'):
-    D_pca, P_pca = apply_PCA_from_dim(D, pca_dim)
-
-    for i in range(pca_dim):
-        plt.figure()
-        for cls in np.unique(L):
-            plt.hist(D_pca[i, L == cls], bins=30, alpha=0.5, label=f'Class {cls}')
-        plt.xlabel(f'PCA Component {i + 1}')
-        plt.ylabel('Frequency')
-        plt.legend()
-        plt.title(f'Histogram of PCA Component {i + 1} - {mode}in Set')
-        os.makedirs(output_dir, exist_ok=True)
-        plt.savefig(os.path.join(output_dir, f'PCA_Component_{i + 1}_Histogram_{mode}.png'))
-        plt.close()
-
+def vrow(x):
+    return x.reshape((1, x.size))
 
 def compute_mu_C(D):
     mu = vcol(D.mean(1))
-    C = ((D - mu) @ (D - mu).T) / float(D.shape[1])
+    C = ((D-mu) @ (D-mu).T) / float(D.shape[1])
     return mu, C
 
+def compute_pca(D, m):
 
-def calculate_covariance(D):
     mu, C = compute_mu_C(D)
-    return C
+    U, s, Vh = numpy.linalg.svd(C)
+    P = U[:, 0:m]
+    return P
+
+def apply_pca(P, D):
+    return P.T @ D
+
+def PCA_LDA_analysis(DTR, LTR, DTE, LTE):
+
+    #dataset already passed through splitting
 
 
-def calculate_pca_projection_matrix(C, m):
-    U, s, Vh = np.linalg.svd(C)
-    P_pca = U[:, :m]
-    return P_pca
+    # Just PCA
+    m = 2
+    UPCA = compute_pca(DTR, m=m)  # Estimated only on model training data
+    DTR_pca = apply_pca(UPCA, DTR)  # Applied to original model training data
+    DVAL_pca = apply_pca(UPCA, DTE)  # Applied to original validation data
+    # Plot results
+    plot_feature_pairs(DTR_pca, LTR, output_dir='Output/PCA_LDA/PCA_FeaturePairPlots', origin=f'PCA_{m}')
+    plot_feature_distributions(DTR_pca, LTR, output_dir='Output/PCA_LDA/PCA_FeatureDistributions', origin=f'PCA_{m}')
 
 
-def apply_pca(D, P_pca):
-    return P_pca.T @ D
+    # Just LDA
+    ULDA = compute_lda_JointDiag(DTR, LTR, m=1)
+    DTR_lda = apply_lda(ULDA, DTR)
+    if DTR_lda[0, LTR == 0].mean() > DTR_lda[0, LTR == 1].mean():
+        ULDA = -ULDA
+        DTR_lda = apply_lda(ULDA, DTR)
+    DVAL_lda = apply_lda(ULDA, DTE)
+
+    # Plot results
+    plot_feature_pairs(DTR_lda, LTR, output_dir='Output/PCA_LDA/LDA_FeaturePairPlots', origin='LDA')
+    # (maybe only histograms) plot_feature_distributions(DTR_pca, DVAL_pca, output_dir='Output/PCA_FeatureDistributions', origin=f'PCA_{m}')
+
+    threshold = (DTR_lda[0, LTR == 0].mean() + DTR_lda[0, LTR == 1].mean()) / 2.0  # Estimated only on model training data
+    PVAL = numpy.zeros(shape=LTE.shape, dtype=numpy.int32)
+    PVAL[DVAL_lda[0] >= threshold] = 1
+    PVAL[DVAL_lda[0] < threshold] = 0
+    print('Labels:     ', LTE)
+    print('Predictions:', PVAL)
+    print('Number of errors:', (PVAL != LTE).sum(), '(out of %d samples)' % (LTE.size))
+    print('Error rate: %.1f%%' % ((PVAL != LTE).sum() / float(LTE.size) * 100))
 
 
-def apply_PCA_from_dim(D, m):
-    DC, _ = center_data(D)
-    C = calculate_covariance(DC)
-    P_pca = calculate_pca_projection_matrix(C, m)
-    D_pca = apply_pca(D, P_pca)
-    return D_pca, P_pca
+    #LDA After PCA
+    ULDA = compute_lda_JointDiag(DTR_pca, LTR, m=1)  # Estimated only on model training data, after PCA has been applied
+    DTR_lda = apply_lda(ULDA, DTR_pca)  # Applied to PCA-transformed model training data, the projected training samples are required to check the orientation of the direction and to compute the threshold
+    if DTR_lda[0, LTR == 0].mean() > DTR_lda[0, LTR == 1].mean():
+        ULDA = -ULDA
+        DTR_lda = apply_lda(ULDA, DTR_pca)
+    DVAL_lda = apply_lda(ULDA, DVAL_pca)  # Applied to PCA-transformed validation data
+
+    threshold = (DTR_lda[0, LTR == 0].mean() + DTR_lda[0, LTR == 1].mean()) / 2.0  # Estimated only on model training data
+    PVAL = numpy.zeros(shape=LTE.shape, dtype=numpy.int32)
+    PVAL[DVAL_lda[0] >= threshold] = 1
+    PVAL[DVAL_lda[0] < threshold] = 0
+    print('Labels:     ', LTE)
+    print('Predictions:', PVAL)
+    print('Number of errors:', (PVAL != LTE).sum(), '(out of %d samples)' % (LTE.size))
+    print('Error rate: %.1f%%' % ((PVAL != LTE).sum() / float(LTE.size) * 100))
 
 
-def PCA_LDA_analysis(DTE, DTR, LTR, LTE):
-    # Split the dataset
-    D_train, L_train, D_val, L_val = split_dataset(DTR, LTR)
+    #TODO: Check if some plots are needed and save results (?) or not
+
+    return
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
     # Apply PCA and then LDA, and plot results for different PCA dimensions
     pca_dim_values = [2, 4, 6]

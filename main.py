@@ -3,6 +3,7 @@ import matplotlib.pyplot as plt
 import os
 import argparse
 
+from Models.Gaussian.gaussian_density import fit_univariate_gaussian_models
 from Models.LogisticRegression.logistic_regression import *
 from Models.MixtureModels.gmm import GMMClass, train_GMM
 from load import *
@@ -26,6 +27,7 @@ from Models.LogisticRegression.logistic_regression import *
 # from Calibration.calibration import *
 
 from sklearn.metrics import roc_curve, auc, ConfusionMatrixDisplay
+
 
 # def train_classifiers(DTR, LTR):
 #     gmm_model = GMMClass()
@@ -205,7 +207,7 @@ def single_fold_calibration(DTR, LTR, DTE, LTE, model, prior=0.2):
     elif isinstance(model, SVMClassifier):
         model.train(DTR_cal_train, LTR_cal_train)
     elif isinstance(model, GMMClass):
-        model.train_GMM_LBG_EM(DTR_cal_train, numComponents=8, psiEig=0.01)
+        model.train(DTR_cal_train, numComponents=8, psiEig=0.01)
 
     scores_cal_val = model.predict(DTR_cal_val)
     print(f"SHAPE OF SCORE CAL VAL = {scores_cal_val.shape}")
@@ -214,7 +216,7 @@ def single_fold_calibration(DTR, LTR, DTE, LTE, model, prior=0.2):
 
     # Fit a logistic regression model for calibration
     lr = LogRegClass(None, None, 0)
-    lr.fit(scores_cal_val.reshape(-1, 1), LTR_cal_val)
+    lr.train(scores_cal_val.reshape(-1, 1), LTR_cal_val)
 
     # Apply the calibration model to the test set
     scores_test = model.predict(DTE)
@@ -226,11 +228,13 @@ def single_fold_calibration(DTR, LTR, DTE, LTE, model, prior=0.2):
 
     return minDCF, actDCF, calibrated_scores
 
+
 def generate_kfold_splits(DTR, LTR, K=5):
     indices = np.arange(DTR.shape[1])
     np.random.shuffle(indices)
     folds = np.array_split(indices, K)
     return folds
+
 
 def kfold_calibration(DTR, LTR, model, splits, prior=0.2):
     K = len(splits)
@@ -253,14 +257,14 @@ def kfold_calibration(DTR, LTR, model, splits, prior=0.2):
         elif isinstance(model, SVMClassifier):
             model.train(DTR_fold, LTR_fold)
         elif isinstance(model, GMMClass):
-            model.train_GMM_LBG_EM(DTR_fold, numComponents=8, psiEig=0.01)
+            model.train(DTR_fold, numComponents=8, psiEig=0.01)
 
         fold_scores = model.predict(DTE_fold)
         fold_scores = fold_scores.flatten()
 
         # Fit a logistic regression model for calibration
         lr = LogRegClass(None, None, 0)
-        lr.fit(fold_scores.reshape(-1, 1), LTE_fold)
+        lr.train(fold_scores.reshape(-1, 1), LTE_fold)
         calibrated_fold_scores = lr.predict_proba(fold_scores.reshape(-1, 1))[:, 1]
         calibrated_scores_list.append(calibrated_fold_scores)
         all_labels.append(LTE_fold)
@@ -291,7 +295,7 @@ def score_level_fusion(scores1, scores2, L, prior=0.2):
 
     lr = LogRegClass(None, None, 0)
     assert fused_scores.shape[0] == L.shape[0], "Mismatch in the number of samples between fused scores and labels"
-    lr.fit(fused_scores, L)
+    lr.train(fused_scores, L)
     calibrated_fusion_scores = lr.predict_proba(fused_scores)[:, 1]
 
     minDCF = compute_minDCF_binary_fast(calibrated_fusion_scores, L, prior, 1, 1)
@@ -405,6 +409,7 @@ def compute_minDCF_binary_fast(llr, classLabels, prior, Cfn, Cfp, returnThreshol
     else:
         return minDCF[idx]
 
+
 def plot_dcf_over_prior(min_dcf_list, act_dcf_list, pi_values, filename):
     plt.figure()
     plt.plot(pi_values, min_dcf_list, label='minDCF', color='b')
@@ -415,20 +420,23 @@ def plot_dcf_over_prior(min_dcf_list, act_dcf_list, pi_values, filename):
     plt.savefig(filename)
     plt.close()
 
+
 def evaluate_performance(D, L, scores, pi_values, name):
     min_dcf_list = []
     act_dcf_list = []
 
     for pi in pi_values:
-        min_dcf, act_dcf = compute_minDCF_binary_fast(scores, L, pi, 1.0, 1.0), compute_actDCF_binary_fast(scores, L, pi, 1.0, 1.0)
+        min_dcf, act_dcf = compute_minDCF_binary_fast(scores, L, pi, 1.0, 1.0), compute_actDCF_binary_fast(scores, L,
+                                                                                                           pi, 1.0, 1.0)
         min_dcf_list.append(min_dcf)
         act_dcf_list.append(act_dcf)
 
     plot_dcf_over_prior(min_dcf_list, act_dcf_list, pi_values, f'{name}_dcf.png')
     return min(min_dcf_list), min(act_dcf_list)
 
+
 def evaluate_system(DTR, LTR, DTE, LTE, D_eval, L_eval, svm_model, lr_model, gmm_model):
-    output_dir = "Output/Evaluation"
+    output_dir = "Old_Output/Output/Evaluation"
     os.makedirs(output_dir, exist_ok=True)
 
     # Step 1: Compute minimum and actual DCF, and Bayes error plots for the delivered system
@@ -438,9 +446,12 @@ def evaluate_system(DTR, LTR, DTE, LTE, D_eval, L_eval, svm_model, lr_model, gmm
     minDCF_lr_eval, actDCF_lr_eval, lr_scores_eval = single_fold_calibration(DTR, LTR, D_eval, L_eval, lr_model)
     minDCF_gmm_eval, actDCF_gmm_eval, gmm_scores_eval = single_fold_calibration(DTR, LTR, D_eval, L_eval, gmm_model)
 
-    plot_bayes_error_with_calibration(svm_scores_eval, L_eval, effPriorLogOdds, output_file=os.path.join(output_dir, 'Bayes_Error_SVM_Eval.png'))
-    plot_bayes_error_with_calibration(lr_scores_eval, L_eval, effPriorLogOdds, output_file=os.path.join(output_dir, 'Bayes_Error_LR_Eval.png'))
-    plot_bayes_error_with_calibration(gmm_scores_eval, L_eval, effPriorLogOdds, output_file=os.path.join(output_dir, 'Bayes_Error_GMM_Eval.png'))
+    plot_bayes_error_with_calibration(svm_scores_eval, L_eval, effPriorLogOdds,
+                                      output_file=os.path.join(output_dir, 'Bayes_Error_SVM_Eval.png'))
+    plot_bayes_error_with_calibration(lr_scores_eval, L_eval, effPriorLogOdds,
+                                      output_file=os.path.join(output_dir, 'Bayes_Error_LR_Eval.png'))
+    plot_bayes_error_with_calibration(gmm_scores_eval, L_eval, effPriorLogOdds,
+                                      output_file=os.path.join(output_dir, 'Bayes_Error_GMM_Eval.png'))
 
     print("Evaluation Results for Individual Models:")
     print(f'SVM Eval minDCF: {minDCF_svm_eval}, actDCF: {actDCF_svm_eval}')
@@ -448,15 +459,19 @@ def evaluate_system(DTR, LTR, DTE, LTE, D_eval, L_eval, svm_model, lr_model, gmm
     print(f'GMM Eval minDCF: {minDCF_gmm_eval}, actDCF: {actDCF_gmm_eval}')
 
     # Step 2: Consider the three best performing systems, and their fusion. Evaluate the corresponding actual DCF
-    minDCF_fusion_eval, actDCF_fusion_eval, fused_scores_eval = score_level_fusion(svm_scores_eval, lr_scores_eval, L_eval)
-    minDCF_fusion_eval, actDCF_fusion_eval, fused_scores_eval = score_level_fusion(fused_scores_eval, gmm_scores_eval, L_eval)
+    minDCF_fusion_eval, actDCF_fusion_eval, fused_scores_eval = score_level_fusion(svm_scores_eval, lr_scores_eval,
+                                                                                   L_eval)
+    minDCF_fusion_eval, actDCF_fusion_eval, fused_scores_eval = score_level_fusion(fused_scores_eval, gmm_scores_eval,
+                                                                                   L_eval)
 
-    plot_bayes_error_with_calibration(fused_scores_eval, L_eval, effPriorLogOdds, output_file=os.path.join(output_dir, 'Bayes_Error_Fusion_Eval.png'))
+    plot_bayes_error_with_calibration(fused_scores_eval, L_eval, effPriorLogOdds,
+                                      output_file=os.path.join(output_dir, 'Bayes_Error_Fusion_Eval.png'))
 
     print(f'Fusion Eval minDCF: {minDCF_fusion_eval}, actDCF: {actDCF_fusion_eval}')
 
     # Step 3: Evaluate minimum and actual DCF for the target application, and analyze the corresponding Bayes error plots
-    plot_bayes_error_with_calibration(fused_scores_eval, L_eval, effPriorLogOdds, output_file=os.path.join(output_dir, 'Bayes_Error_Target_Application_Eval.png'))
+    plot_bayes_error_with_calibration(fused_scores_eval, L_eval, effPriorLogOdds,
+                                      output_file=os.path.join(output_dir, 'Bayes_Error_Target_Application_Eval.png'))
 
     # Step 4: Analyze whether your training strategy was effective for the selected approach (SVM in this case)
     C_values = [0.001, 0.01, 0.1, 1, 10]
@@ -468,7 +483,8 @@ def evaluate_system(DTR, LTR, DTE, LTE, D_eval, L_eval, svm_model, lr_model, gmm
             svm_model = SVMClassifier(kernel=kernel, C=C)
             svm_model.train(DTR, LTR)
             svm_scores_eval = svm_model.project(D_eval)
-            svm_min_dcf_eval, _ = evaluate_performance(D_eval, L_eval, svm_scores_eval, effPriorLogOdds, f'svm_eval_C{C}_kernel{kernel}')
+            svm_min_dcf_eval, _ = evaluate_performance(D_eval, L_eval, svm_scores_eval, effPriorLogOdds,
+                                                       f'svm_eval_C{C}_kernel{kernel}')
             print(f'SVM (C={C}, kernel={kernel}) Eval minDCF: {svm_min_dcf_eval}')
             if svm_min_dcf_eval < best_min_dcf:
                 best_min_dcf = svm_min_dcf_eval
@@ -476,8 +492,9 @@ def evaluate_system(DTR, LTR, DTE, LTE, D_eval, L_eval, svm_model, lr_model, gmm
 
     return
 
+
 def run_project_analysis(DTR, LTR, DTE, LTE):
-    output_dir = "Output/CalibrationFusion"
+    output_dir = "Old_Output/Output/CalibrationFusion"
     os.makedirs(output_dir, exist_ok=True)
 
     # Define the models without pre-training
@@ -489,48 +506,70 @@ def run_project_analysis(DTR, LTR, DTE, LTE):
     splits = generate_kfold_splits(DTR, LTR, K=5)
 
     # Calibration and evaluation using single-fold approach
-    minDCF_svm_single, actDCF_svm_single, calibrated_svm_scores_single = single_fold_calibration(DTR, LTR, DTE, LTE, svm_model)
+    minDCF_svm_single, actDCF_svm_single, calibrated_svm_scores_single = single_fold_calibration(DTR, LTR, DTE, LTE,
+                                                                                                 svm_model)
     print("SVM Done Single")
-    minDCF_lr_single, actDCF_lr_single, calibrated_lr_scores_single = single_fold_calibration(DTR, LTR, DTE, LTE, lr_model)
+    minDCF_lr_single, actDCF_lr_single, calibrated_lr_scores_single = single_fold_calibration(DTR, LTR, DTE, LTE,
+                                                                                              lr_model)
     print("LR Done Single")
-    minDCF_gmm_single, actDCF_gmm_single, calibrated_gmm_scores_single = single_fold_calibration(DTR, LTR, DTE, LTE, gmm_model)
+    minDCF_gmm_single, actDCF_gmm_single, calibrated_gmm_scores_single = single_fold_calibration(DTR, LTR, DTE, LTE,
+                                                                                                 gmm_model)
     print("GMM Done Single")
 
     print("Single done")
 
     # Calibration and evaluation using K-fold approach
-    minDCF_svm_kfold, actDCF_svm_kfold, calibrated_svm_scores_kfold, all_labels_svm = kfold_calibration(DTR, LTR, svm_model, splits)
-    minDCF_lr_kfold, actDCF_lr_kfold, calibrated_lr_scores_kfold, all_labels_lr = kfold_calibration(DTR, LTR, lr_model, splits)
-    minDCF_gmm_kfold, actDCF_gmm_kfold, calibrated_gmm_scores_kfold, all_labels_gmm = kfold_calibration(DTR, LTR, gmm_model, splits)
+    minDCF_svm_kfold, actDCF_svm_kfold, calibrated_svm_scores_kfold, all_labels_svm = kfold_calibration(DTR, LTR,
+                                                                                                        svm_model,
+                                                                                                        splits)
+    minDCF_lr_kfold, actDCF_lr_kfold, calibrated_lr_scores_kfold, all_labels_lr = kfold_calibration(DTR, LTR, lr_model,
+                                                                                                    splits)
+    minDCF_gmm_kfold, actDCF_gmm_kfold, calibrated_gmm_scores_kfold, all_labels_gmm = kfold_calibration(DTR, LTR,
+                                                                                                        gmm_model,
+                                                                                                        splits)
 
     print("Kfold done")
 
     # Debug prints for label consistency
     print(f"Labels SVM: {all_labels_svm[:10]} - Labels LR: {all_labels_lr[:10]} - Labels GMM: {all_labels_gmm[:10]}")
-    print(f"Labels SVM shape: {all_labels_svm.shape} - Labels LR shape: {all_labels_lr.shape} - Labels GMM shape: {all_labels_gmm.shape}")
+    print(
+        f"Labels SVM shape: {all_labels_svm.shape} - Labels LR shape: {all_labels_lr.shape} - Labels GMM shape: {all_labels_gmm.shape}")
 
     # Ensure labels are consistent
-    assert np.array_equal(all_labels_svm, all_labels_lr) and np.array_equal(all_labels_lr, all_labels_gmm), "Mismatch in labels between models"
+    assert np.array_equal(all_labels_svm, all_labels_lr) and np.array_equal(all_labels_lr,
+                                                                            all_labels_gmm), "Mismatch in labels between models"
     all_labels_kfold = all_labels_svm
 
     # Plot the results
     effPriorLogOdds = np.linspace(-4, 4, 21)
-    plot_bayes_error_with_calibration(calibrated_svm_scores_single, LTE, effPriorLogOdds, output_file=os.path.join(output_dir, 'Bayes_Error_SVM_Single.png'))
-    plot_bayes_error_with_calibration(calibrated_lr_scores_single, LTE, effPriorLogOdds, output_file=os.path.join(output_dir, 'Bayes_Error_LR_Single.png'))
-    plot_bayes_error_with_calibration(calibrated_gmm_scores_single, LTE, effPriorLogOdds, output_file=os.path.join(output_dir, 'Bayes_Error_GMM_Single.png'))
-    plot_bayes_error_with_calibration(calibrated_svm_scores_kfold, all_labels_kfold, effPriorLogOdds, output_file=os.path.join(output_dir, 'Bayes_Error_SVM_Kfold.png'))
-    plot_bayes_error_with_calibration(calibrated_lr_scores_kfold, all_labels_kfold, effPriorLogOdds, output_file=os.path.join(output_dir, 'Bayes_Error_LR_Kfold.png'))
-    plot_bayes_error_with_calibration(calibrated_gmm_scores_kfold, all_labels_kfold, effPriorLogOdds, output_file=os.path.join(output_dir, 'Bayes_Error_GMM_Kfold.png'))
+    plot_bayes_error_with_calibration(calibrated_svm_scores_single, LTE, effPriorLogOdds,
+                                      output_file=os.path.join(output_dir, 'Bayes_Error_SVM_Single.png'))
+    plot_bayes_error_with_calibration(calibrated_lr_scores_single, LTE, effPriorLogOdds,
+                                      output_file=os.path.join(output_dir, 'Bayes_Error_LR_Single.png'))
+    plot_bayes_error_with_calibration(calibrated_gmm_scores_single, LTE, effPriorLogOdds,
+                                      output_file=os.path.join(output_dir, 'Bayes_Error_GMM_Single.png'))
+    plot_bayes_error_with_calibration(calibrated_svm_scores_kfold, all_labels_kfold, effPriorLogOdds,
+                                      output_file=os.path.join(output_dir, 'Bayes_Error_SVM_Kfold.png'))
+    plot_bayes_error_with_calibration(calibrated_lr_scores_kfold, all_labels_kfold, effPriorLogOdds,
+                                      output_file=os.path.join(output_dir, 'Bayes_Error_LR_Kfold.png'))
+    plot_bayes_error_with_calibration(calibrated_gmm_scores_kfold, all_labels_kfold, effPriorLogOdds,
+                                      output_file=os.path.join(output_dir, 'Bayes_Error_GMM_Kfold.png'))
 
     # Score-level fusion
-    minDCF_fusion_single, actDCF_fusion_single, fused_scores_single = score_level_fusion(calibrated_svm_scores_single, calibrated_lr_scores_single, LTE)
-    minDCF_fusion_kfold, actDCF_fusion_kfold, fused_scores_kfold = score_level_fusion(calibrated_svm_scores_kfold, calibrated_lr_scores_kfold, all_labels_kfold)
+    minDCF_fusion_single, actDCF_fusion_single, fused_scores_single = score_level_fusion(calibrated_svm_scores_single,
+                                                                                         calibrated_lr_scores_single,
+                                                                                         LTE)
+    minDCF_fusion_kfold, actDCF_fusion_kfold, fused_scores_kfold = score_level_fusion(calibrated_svm_scores_kfold,
+                                                                                      calibrated_lr_scores_kfold,
+                                                                                      all_labels_kfold)
 
     print("Fusion done")
 
     # Plot the fusion results
-    plot_bayes_error_with_calibration(fused_scores_single, LTE, effPriorLogOdds, output_file=os.path.join(output_dir, 'Bayes_Error_Fusion_Single.png'))
-    plot_bayes_error_with_calibration(fused_scores_kfold, all_labels_kfold, effPriorLogOdds, output_file=os.path.join(output_dir, 'Bayes_Error_Fusion_Kfold.png'))
+    plot_bayes_error_with_calibration(fused_scores_single, LTE, effPriorLogOdds,
+                                      output_file=os.path.join(output_dir, 'Bayes_Error_Fusion_Single.png'))
+    plot_bayes_error_with_calibration(fused_scores_kfold, all_labels_kfold, effPriorLogOdds,
+                                      output_file=os.path.join(output_dir, 'Bayes_Error_Fusion_Kfold.png'))
 
     # Print results
     print(f'SVM Single-Fold minDCF: {minDCF_svm_single}, actDCF: {actDCF_svm_single}')
@@ -541,7 +580,6 @@ def run_project_analysis(DTR, LTR, DTE, LTE):
     print(f'GMM K-Fold minDCF: {minDCF_gmm_kfold}, actDCF: {actDCF_gmm_kfold}')
     print(f'Fusion Single-Fold minDCF: {minDCF_fusion_single}, actDCF: {actDCF_fusion_single}')
     print(f'Fusion K-Fold minDCF: {minDCF_fusion_kfold}, actDCF: {actDCF_fusion_kfold}')
-
 
     # Load evaluation data
     D_eval, L_eval = load_data('Data/evalData.txt')
@@ -621,7 +659,6 @@ def run_project_analysis(DTR, LTR, DTE, LTE):
 #     return avg_system_1_dcf, avg_system_2_dcf, avg_fusion_dcf, system_1_eval_dcf, system_2_eval_dcf, fusion_eval_dcf
 
 
-
 def normalize_data(D):
     mean = np.mean(D, axis=1, keepdims=True)
     std = np.std(D, axis=1, keepdims=True)
@@ -638,6 +675,8 @@ def center_data(D):
 def main(type, mode):
     (DTR, LTR), (DTE, LTE) = loadTrainingAndTestData('Data/trainData.txt', 'Data/trainData.txt')
 
+    plot_hist(DTR, LTR)
+
     (DTR, LTR), (DTE, LTE) = split_db_2to1(DTR, LTR)
     ciao = False
     print("ciao")
@@ -645,41 +684,48 @@ def main(type, mode):
     # if ciao:
     ############################ DATA ANALYSIS - LAB 2 ############################
 
-    data_analysis(DTR, LTR)
+    #data_analysis(DTR, LTR)
 
     ############################ PCA & LDA - LAB 3  ############################
 
-    PCA_LDA_analysis(DTE, DTR, LTR, LTE)
+    #PCA_LDA_analysis(DTR, LTR, DTE, LTE)
 
     ############################ UNIVARIATE GAUSSIAN MODELS - LAB 4 ############################
 
-    Univariate_model(DTE, DTR, LTE, LTR)
+    fit_univariate_gaussian_models(DTR, LTR)
+
 
     ############################ MULTIVARIATE GAUSSIAN MODELS - LAB 5 ############################
 
-    train_MVG_1(DTE, DTR, LTE, LTR)
+    train_Lab_5(DTR, LTR, DTE, LTE)
+    #train_MVG_1(DTE, DTR, LTE, LTR)
+
 
     ############################ MULTIVARIATE GAUSSIAN MODELS - PLOTS FOR LAB 7 ############################
 
-    train_MVG(DTE, DTR, LTE, LTR)
+    #train_MVG(DTE, DTR, LTE, LTR)
+    train_Lab_7(DTR, LTR, DTE, LTE)
 
     ############################ LOGISTIC REGRESSION - LAB 8 ############################
 
-    train_LR(DTE, DTR, LTE, LTR)
+    Logistic_Regression_train(DTE, DTR, LTE, LTR)
+
 
     ############################ SVM - LAB 9 ############################
 
     train_SVM(DTE, DTR, LTE, LTR)
 
+
     ############################ GMM - LAB 10 ############################
 
     train_GMM(DTE, DTR, LTE, LTR)
+    return
 
     def compare_best_models(DTR, LTR, DTE, LTE):
         pi_t = 0.1
         effPriorLogOdds = np.linspace(-4, 4, 21)
 
-        output_dir = "Output/Comparison"
+        output_dir = "Old_Output/Output/Comparison"
         os.makedirs(output_dir, exist_ok=True)
 
         # Train and get scores for Logistic Regression
@@ -706,8 +752,8 @@ def main(type, mode):
         gmm_model_name = 'GMM'
         gmm_num_components = 8
         gmm_classifier = GMMClass(covariance_type='full')
-        gmm_classifier.train_GMM_LBG_EM(DTR, numComponents=gmm_num_components, psiEig=0.01, alpha=0.1,
-                                        epsLLAverage=1e-6, verbose=True)
+        gmm_classifier.train(DTR, numComponents=gmm_num_components, psiEig=0.01, alpha=0.1,
+                             epsLLAverage=1e-6, verbose=True)
         gmm_scores = gmm_classifier.logpdf_GMM(DTE)
         plot_bayes_error(gmm_scores, LTE, effPriorLogOdds, output_file=os.path.join(output_dir, 'Bayes_Error_GMM.png'))
 
@@ -725,7 +771,7 @@ def main(type, mode):
 
     compare_best_models(DTR, LTR, DTE, LTE)
 
-    #print("finished comparing")
+    # print("finished comparing")
 
     '''
     BEST 3 MODELS:
@@ -747,7 +793,7 @@ def main(type, mode):
 
     run_project_analysis(DTR, LTR, DTE, LTE)
 
-    #eval(DTE, DTR, LTE, LTR)
+    # eval(DTE, DTR, LTE, LTR)
 
     return
 
