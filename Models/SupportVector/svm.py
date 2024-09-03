@@ -420,9 +420,9 @@ def train_SVM(DTE, DTR, LTE, LTR): #TODO: finished, mainly working, poor results
     # Call the function to test SVM on Iris dataset
     test_svm_on_iris()
 
-    fraction = 0.1
-    DTR, LTR = reduce_dataset(DTR, LTR, fraction)
-    DTE, LTE = reduce_dataset(DTE, LTE, fraction)
+    # fraction = 0.1
+    # DTR, LTR = reduce_dataset(DTR, LTR, fraction)
+    # DTE, LTE = reduce_dataset(DTE, LTE, fraction)
 
     # Evaluate with original data
     actual_DCFs, min_DCFs = evaluate_SVM(DTE, DTR, LTE, LTR, centered=False)

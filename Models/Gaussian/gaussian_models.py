@@ -1,6 +1,7 @@
 import numpy as np
 import os
 import matplotlib.pyplot as plt
+import sklearn.datasets
 
 from sklearn.metrics import roc_curve, auc, ConfusionMatrixDisplay
 from sklearn.metrics import confusion_matrix as confMAt
@@ -8,7 +9,8 @@ from sklearn.metrics import confusion_matrix as confMAt
 from Models.Gaussian.gaussian_density import *
 from Models.bayesRisk import compute_optimal_Bayes_binary_llr, compute_empirical_Bayes_risk_binary, \
     compute_minDCF_binary_slow, compute_minDCF_binary_fast, plot_ROC_curve, plot_bayes_error, compute_confusion_matrix, \
-    plot_confusion_matrix
+    plot_confusion_matrix, compute_empirical_Bayes_risk, compute_optimal_Bayes, uniform_cost_matrix, compute_posteriors, \
+    compute_empirical_Bayes_risk_binary_llr_optimal_decisions
 from Preprocess.PCA import *
 
 
@@ -221,9 +223,107 @@ def train_Lab_5(DTR, LTR, DTE, LTE):
 
     return
 
+def load_iris():
+    D, L = sklearn.datasets.load_iris()['data'].T, sklearn.datasets.load_iris()['target']
+    return D, L
 
+def split_db_2to1(D, L, seed=0):
+    nTrain = int(D.shape[1] * 2.0 / 3.0)
+    np.random.seed(seed)
+    idx = np.random.permutation(D.shape[1])
+    idxTrain = idx[0:nTrain]
+    idxTest = idx[nTrain:]
+    DTR = D[:, idxTrain]
+    DTE = D[:, idxTest]
+    LTR = L[idxTrain]
+    LTE = L[idxTest]
+    return (DTR, LTR), (DTE, LTE)
+
+# Assuming Gaussian class and other helper functions are defined as in the previous messages.
+
+def evaluate_IRIS_MVG_multiclass(): #todo this is nnot working
+    """
+    Evaluate the MVG models on the IRIS dataset for multi-class classification.
+    Also computes the empirical Bayes risk (DCF) for binary classification tasks with different priors and costs.
+    """
+
+    # Load the data
+    D, L = load_iris()
+
+    # Split the dataset into training and test sets
+    (DTR, LTR), (DTE, LTE) = split_db_2to1(D, L)
+
+    model = Gaussian(model_type="MVG")
+
+    # Train the model with the training data
+    model.train(DTR, LTR)
+
+    # Predict the posterior probabilities on the test data
+    priors = np.ones(3) / 3.0  # Assuming uniform prior
+    posteriors = model.predict(DTE, priors)
+    predictedLabels = np.argmax(posteriors, axis=0)
+
+    # Compute and print the confusion matrix for the multi-class task
+    confusion_matrix = compute_confusion_matrix(predictedLabels, LTE)
+    print("Confusion Matrix (Multi-class):\n", confusion_matrix)
+
+    # Now, let's focus on the binary task evaluation for different priors and costs
+    binary_pairs = [(0, 1), (0, 2), (1, 2)]  # Different binary class pairs to consider
+    for class1, class2 in binary_pairs:
+        print(f"\nBinary task evaluation for classes {class1} vs {class2}")
+
+        # Extract the relevant data for the binary task
+        DTR_binary = DTR[:, np.isin(LTR, [class1, class2])]
+        LTR_binary = LTR[np.isin(LTR, [class1, class2])]
+        DTE_binary = DTE[:, np.isin(LTE, [class1, class2])]
+        LTE_binary = LTE[np.isin(LTE, [class1, class2])]
+
+        # Remap labels to 0 and 1
+        LTR_binary = (LTR_binary == class2).astype(int)
+        LTE_binary = (LTE_binary == class2).astype(int)
+
+        # Train the binary model
+        model.train(DTR_binary, LTR_binary)
+
+        # Get the log-likelihood ratios for the test data
+        LLR = model.compute_llr(DTE_binary, model.params, 1, 0)  # Note: class2 is mapped to 1, class1 to 0
+
+        # Normalize LLRs
+        LLR -= np.mean(LLR)
+
+        # Sanity check: print LLRs
+        print(f"Log-Likelihood Ratios (first 10 values): {LLR[:10]}")
+
+        # Check if LLR values are spread out properly
+        print(f"LLR min: {LLR.min()}, LLR max: {LLR.max()}")
+
+        # Evaluate different priors and costs
+        for prior, Cfn, Cfp in [(0.5, 1, 1), (0.8, 1, 1), (0.5, 10, 1), (0.8, 1, 10)]:
+            print(f"\nPrior: {prior}, Cfn: {Cfn}, Cfp: {Cfp}")
+
+            # Compute the empirical Bayes risk (actDCF)
+            actDCF = compute_empirical_Bayes_risk_binary_llr_optimal_decisions(LLR, LTE_binary, prior, Cfn, Cfp)
+
+            # Compute the minimum DCF
+            minDCF, minDCFThreshold = compute_minDCF_binary_fast(LLR, LTE_binary, prior, Cfn, Cfp, returnThreshold=True)
+
+            # Check the thresholds and DCFs
+            print(f"Thresholds and DCFs:")
+            print(f"minDCFThreshold: {minDCFThreshold}, minDCF: {minDCF}, actDCF: {actDCF}")
+
+            # Print the results
+            print(f"actDCF: {actDCF:.4f}")
+            print(f"minDCF: {minDCF:.4f} @ threshold {minDCFThreshold:.4f}")
+
+    print("\nFinished evaluating IRIS dataset with MVG model.")
 
 def train_Lab_7(DTR, LTR, DTE, LTE):
+
+    print("Starting IRIS")
+    evaluate_IRIS_MVG_multiclass()
+    print("Finished Iris")
+
+
     output_dir_base = 'Output/Gaussian'
     applications = [
         (0.5, 1.0, 1.0),  # uniform prior and costs

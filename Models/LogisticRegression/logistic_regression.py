@@ -1,12 +1,13 @@
 import os
 
+import numpy
 import numpy as np
 import scipy.optimize
 from matplotlib import pyplot as plt
 
 from Models.bayesRisk import compute_empirical_Bayes_risk_binary_llr_optimal_decisions, compute_minDCF_binary_fast
 from Preprocess.PCA import apply_pca, compute_pca
-
+import sklearn.datasets
 
 def vcol(x):
     return x.reshape((x.size, 1))
@@ -15,8 +16,28 @@ def vcol(x):
 def vrow(x):
     return x.reshape((1, x.size))
 
+def load_iris_binary():
+    D, L = sklearn.datasets.load_iris()['data'].T, sklearn.datasets.load_iris()['target']
+    D = D[:, L != 0]  # We remove setosa from D
+    L = L[L != 0]     # We remove setosa from L
+    L[L == 2] = 0     # We assign label 0 to virginica (was label 2)
+    return D, L
 
-# TODO: weighted is not working, overall to be reviewed for consistency
+def split_db_2to1(D, L, seed=0):
+    nTrain = int(D.shape[1] * 2.0 / 3.0)
+    np.random.seed(seed)
+    idx = np.random.permutation(D.shape[1])
+    idxTrain = idx[0:nTrain]
+    idxTest = idx[nTrain:]
+
+    DTR = D[:, idxTrain]
+    DVAL = D[:, idxTest]
+    LTR = L[idxTrain]
+    LVAL = L[idxTest]
+    return (DTR, LTR), (DVAL, LVAL)
+
+
+# TODO: weighted is NOW working, overall to be reviewed for consistency, quadratic is the worst
 
 class LogRegClass:
     def __init__(self, DTR, LTR, l, weighted=False, pT=0.5):
@@ -40,24 +61,33 @@ class LogRegClass:
         return loss, grad
 
     def weighted_logreg_obj(self, v):
-        w, b = v[:-1], v[-1]
-        ZTR = self.LTR * 2.0 - 1.0
-        S = (np.dot(vcol(w).T, self.DTR) + b).ravel()
-        wTrue = self.pT / (ZTR > 0).sum()
+        w = v[:-1]
+        b = v[-1]
+        ZTR = self.LTR * 2.0 - 1.0  # Convert labels to +1/-1
+        s = numpy.dot(vcol(w).T, self.DTR).ravel() + b
+
+        # Calculate the weights based on prior and class distribution
+        wTrue = self.pT / (ZTR > 0).sum()  # Compute the weights for the two classes
         wFalse = (1 - self.pT) / (ZTR < 0).sum()
-        loss = np.logaddexp(0, -ZTR * S)
-        loss[ZTR > 0] *= wTrue
+
+        # Compute the weighted loss
+        loss = numpy.logaddexp(0, -ZTR * s)
+        loss[ZTR > 0] *= wTrue  # Apply the weights to the loss computations
         loss[ZTR < 0] *= wFalse
-        G = -ZTR / (1.0 + np.exp(ZTR * S))
-        G[ZTR > 0] *= wTrue
+        loss = loss.sum() + self.l / 2 * numpy.linalg.norm(w) ** 2
+
+        # Compute the gradient
+        G = -ZTR / (1.0 + numpy.exp(ZTR * s))
+        G[ZTR > 0] *= wTrue  # Apply the weights to the gradient computations
         G[ZTR < 0] *= wFalse
-        GW = (vrow(G) * self.DTR).mean(1) + self.l * w
-        Gb = G.mean()
-        grad = np.hstack([GW, Gb])
-        return loss.mean() + self.l / 2 * np.linalg.norm(w) ** 2, grad
+        GW = (vrow(G) * self.DTR).sum(1) + self.l * w.ravel()
+        Gb = G.sum()
+
+        grad = numpy.hstack([GW, numpy.array(Gb)])
+        return loss, grad
 
     def train(self):
-        x0 = np.zeros(self.DTR.shape[0] + 1)
+        x0 = numpy.zeros(self.DTR.shape[0] + 1)
         if self.weighted:
             vf, _, _ = scipy.optimize.fmin_l_bfgs_b(self.weighted_logreg_obj, x0, approx_grad=False)
         else:
@@ -171,7 +201,97 @@ def print_dcf_results(model_name, actual_DCFs, min_DCFs, lambdas):
     print()
 
 
+def evaluate_IRIS_LR(lambdas=[1e-3, 1e-1, 1.0]):
+    # Load and split the dataset
+
+    print("NOW EVALUATING IRIS DATASET")
+    print()
+    D, L = load_iris_binary()
+    (DTR, LTR), (DVAL, LVAL) = split_db_2to1(D, L)
+
+    # Prior for the class 1 (versicolor) in the training set
+    pT = LTR.mean()
+
+    for l in lambdas:
+        print(f"Evaluating Logistic Regression with lambda={l:.1e}")
+
+        # Initialize and train the logistic regression model
+        lr_model = LogRegClass(DTR, LTR, l, weighted=False, pT=pT)
+        lr_model.train()
+
+        # Predict the validation set
+        scores = lr_model.predict(DVAL)
+
+        # Evaluate the error rate
+        predictions = (scores > 0).astype(int)
+        error_rate = (predictions != LVAL).mean() * 100
+
+        # Compute minDCF and actDCF
+        emp_prior = LTR.mean()
+        sllr = scores - np.log(emp_prior / (1 - emp_prior))
+        minDCF = compute_minDCF_binary_fast(sllr, LVAL, 0.5, 1.0, 1.0)
+        actDCF = compute_empirical_Bayes_risk_binary_llr_optimal_decisions(sllr, LVAL, 0.5, 1.0, 1.0)
+
+        # Compute the objective function value J(w*, b*)
+        obj_value, _ = lr_model.logreg_obj(np.hstack([lr_model.w, lr_model.b]))
+
+        # Print results
+        print(f"J(w*, b*): {obj_value:.6e}")
+        print(f"Error rate: {error_rate:.1f}%")
+        print(f"minDCF: {minDCF:.4f} / actDCF: {actDCF:.4f}\n")
+
+    print("FINISHED EVALUATING IRIS DATASET")
+    print()
+
+def evaluate_IRIS_LR_weighted(lambdas=[1e-3, 1e-1, 1.0], pi_T=0.8):
+    # Load and split the dataset
+
+    print("NOW EVALUATING IRIS DATASET WITH WEIGHTED LOGISTIC REGRESSION")
+    print()
+    D, L = load_iris_binary()
+    (DTR, LTR), (DVAL, LVAL) = split_db_2to1(D, L)
+
+    # Number of samples of class 1 and 0 in the training set
+    n_T = (LTR == 1).sum()
+    n_F = (LTR == 0).sum()
+
+    for l in lambdas:
+        print(f"Evaluating Weighted Logistic Regression with lambda={l:.1e}, pi_T={pi_T:.1f}")
+
+        # Initialize and train the weighted logistic regression model
+        lr_model = LogRegClass(DTR, LTR, l, weighted=True, pT=pi_T)
+        lr_model.train()
+
+        # Predict the validation set
+        scores = lr_model.predict(DVAL)
+
+        # Adjust the scores to behave like LLRs by removing prior log-odds
+        sllr = scores - np.log(pi_T / (1 - pi_T))
+
+        # Evaluate the error rate
+        predictions = (scores > 0).astype(int)
+        error_rate = (predictions != LVAL).mean() * 100
+
+        # Compute minDCF and actDCF
+        minDCF = compute_minDCF_binary_fast(sllr, LVAL, pi_T, 1.0, 1.0)
+        actDCF = compute_empirical_Bayes_risk_binary_llr_optimal_decisions(sllr, LVAL, pi_T, 1.0, 1.0)
+
+        # Compute the objective function value J(w*, b*)
+        obj_value, _ = lr_model.weighted_logreg_obj(np.hstack([lr_model.w, lr_model.b]))
+
+        # Print results
+        print(f"J(w*, b*): {obj_value:.6e}")
+        print(f"Error rate: {error_rate:.1f}%")
+        print(f"minDCF: {minDCF:.4f} / actDCF: {actDCF:.4f}\n")
+
+    print("FINISHED EVALUATING IRIS DATASET WITH WEIGHTED LOGISTIC REGRESSION")
+    print()
+
+
 def Logistic_Regression_train(DTE, DTR, LTE, LTR): #TODO: working but results are not so good. double check the weighted and the Reduced dataset; moreover the minDCF for all of them. (Check 10/10 report)
+    evaluate_IRIS_LR()
+    evaluate_IRIS_LR_weighted()
+
     output_dir_base = 'Output/LogisticRegression/'
     if not os.path.exists(output_dir_base):
         os.makedirs(output_dir_base)
